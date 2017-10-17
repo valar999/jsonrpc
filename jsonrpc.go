@@ -163,6 +163,7 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	s.seqMutex.Lock()
 	id := s.Seq
 	s.Seq++
+	s.response[id] = make(chan Msg)
 	s.seqMutex.Unlock()
 	req := Request{
 		Id:     id,
@@ -176,7 +177,6 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	if _, err := s.conn.Write(data); err != nil {
 		return err
 	}
-	s.response[id] = make(chan Msg)
 	response := <-s.response[id]
 	if response.Error != "" {
 		return errors.New(response.Error)
