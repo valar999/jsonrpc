@@ -2,3 +2,11 @@ language: go
 
 go:
 - 1.9.x
+
+before_install:
+- go get github.com/axw/gocov/gocov
+- go get github.com/mattn/goveralls
+- go get golang.org/x/tools/cmd/cover
+
+after_success:
+- test "$TRAVIS_GO_VERSION" = "1.9" && goveralls -service=travis-ci
