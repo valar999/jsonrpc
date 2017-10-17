@@ -13,7 +13,7 @@ import (
 
 var null = json.RawMessage([]byte("null"))
 
-type Msg struct {
+type msg struct {
 	Id     interface{}     `json:"id"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
@@ -21,24 +21,24 @@ type Msg struct {
 	Error  string          `json:"error"`
 }
 
-type Request struct {
+type request struct {
 	Id     int         `json:"id"`
 	Method string      `json:"method"`
 	Params interface{} `json:"params"`
 }
 
-type Response struct {
+type response struct {
 	Id     interface{}     `json:"id"`
 	Result interface{}     `json:"result"`
 	Error  json.RawMessage `json:"error"`
 }
 
-type Notify struct {
+type notify struct {
 	Method string      `json:"method"`
 	Params interface{} `json:"params"`
 }
 
-type Method struct {
+type method struct {
 	Func       reflect.Value
 	ParamsType reflect.Type
 	ReplyType  reflect.Type
@@ -46,9 +46,9 @@ type Method struct {
 
 type Server struct {
 	api      reflect.Value
-	methods  map[string]Method
+	methods  map[string]method
 	conn     io.ReadWriteCloser
-	response map[int]chan Msg
+	response map[int]chan msg
 	Seq      int
 	seqMutex *sync.Mutex
 }
@@ -64,7 +64,7 @@ func Dial(network, address string) (*Server, error) {
 func NewConn(conn net.Conn) *Server {
 	server := &Server{
 		conn:     conn,
-		response: make(map[int]chan Msg),
+		response: make(map[int]chan msg),
 		seqMutex: new(sync.Mutex),
 	}
 	go server.ServeConn(conn)
@@ -73,14 +73,14 @@ func NewConn(conn net.Conn) *Server {
 
 func NewApi(api interface{}) *Server {
 	apiType := reflect.TypeOf(api)
-	methods := make(map[string]Method)
+	methods := make(map[string]method)
 	for i := 0; i < apiType.NumMethod(); i++ {
-		method := apiType.Method(i)
-		name := method.Name
-		methods[name] = Method{
-			Func:       method.Func,
-			ParamsType: method.Type.In(1),
-			ReplyType:  method.Type.In(2),
+		meth := apiType.Method(i)
+		name := meth.Name
+		methods[name] = method{
+			Func:       meth.Func,
+			ParamsType: meth.Type.In(1),
+			ReplyType:  meth.Type.In(2),
 		}
 		// TODO change only first char also
 		methods[strings.ToLower(name)] = methods[name]
@@ -88,13 +88,13 @@ func NewApi(api interface{}) *Server {
 	return &Server{
 		api:      reflect.ValueOf(api),
 		methods:  methods,
-		response: make(map[int]chan Msg),
+		response: make(map[int]chan msg),
 		seqMutex: new(sync.Mutex),
 	}
 }
 
 // call api method, this function is called from ServeConn()
-func (s *Server) callMethod(conn io.ReadWriteCloser, method Method, data Msg) {
+func (s *Server) callMethod(conn io.ReadWriteCloser, method method, data msg) {
 	params := reflect.New(method.ParamsType)
 	err := json.Unmarshal(data.Params, params.Interface())
 	if err != nil {
@@ -110,7 +110,7 @@ func (s *Server) callMethod(conn io.ReadWriteCloser, method Method, data Msg) {
 		return
 	}
 	reply = reply.Elem()
-	buf, err := json.Marshal(Response{
+	buf, err := json.Marshal(response{
 		Id:     data.Id,
 		Result: reply.Interface(),
 		Error:  null,
@@ -125,7 +125,7 @@ func (s *Server) callMethod(conn io.ReadWriteCloser, method Method, data Msg) {
 func (s *Server) ServeConn(conn io.ReadWriteCloser) {
 	dec := json.NewDecoder(conn)
 	for {
-		var data Msg
+		var data msg
 		err := dec.Decode(&data)
 		if err != nil {
 			_, ok := err.(*json.UnmarshalTypeError)
@@ -163,9 +163,9 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	s.seqMutex.Lock()
 	id := s.Seq
 	s.Seq++
-	s.response[id] = make(chan Msg)
+	s.response[id] = make(chan msg)
 	s.seqMutex.Unlock()
-	req := Request{
+	req := request{
 		Id:     id,
 		Method: method,
 		Params: args,
@@ -188,7 +188,7 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 }
 
 func (s *Server) Notify(method string, args interface{}) error {
-	req := Notify{
+	req := notify{
 		Method: method,
 		Params: args,
 	}

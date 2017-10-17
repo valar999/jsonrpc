@@ -29,7 +29,7 @@ func TestServer(t *testing.T) {
 	server := NewApi(new(API))
 	go server.ServeConn(srv)
 	cli.Write([]byte(`{"id":1,"method":"API.Add","params":[2,3]}`))
-	var data Response
+	var data response
 	if err := cliDec.Decode(&data); err != nil {
 		t.Fail()
 	}
@@ -52,7 +52,7 @@ func TestServerWithTwoSlow(t *testing.T) {
 	go server.ServeConn(srv)
 	cli.Write([]byte(`{"id":1,"method":"API.AddSlow","params":[1,2,50]}`))
 	cli.Write([]byte(`{"id":2,"method":"API.AddSlow","params":[1,3,10]}`))
-	var data1, data2 Response
+	var data1, data2 response
 	start := time.Now()
 	if err := cliDec.Decode(&data1); err != nil {
 		t.Fail()
