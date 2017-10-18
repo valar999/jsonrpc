@@ -1,22 +1,23 @@
 package jsonrpc
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
-	"fmt"
 	"reflect"
 	"strings"
 	"sync"
-	"context"
 )
 
 // keys for ctx
 type key int
+
 const (
-	connKey key = 0 
+	connKey key = 0
 )
 
 var null = json.RawMessage([]byte("null"))

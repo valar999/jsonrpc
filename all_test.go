@@ -2,11 +2,11 @@ package jsonrpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"testing"
 	"time"
-	"context"
 )
 
 type API struct {
