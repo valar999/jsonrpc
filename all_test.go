@@ -6,6 +6,7 @@ import (
 	"net"
 	"testing"
 	"time"
+	"context"
 )
 
 type API struct {
@@ -22,11 +23,25 @@ func (a *API) AddSlow(args [3]int, reply *int) error {
 	return nil
 }
 
+type APICtx struct {
+}
+
+func (a *APICtx) Add(ctx context.Context, args [2]int, reply *int) error {
+	*reply = args[0] + args[1]
+	if ctx.Value(connKey) != nil {
+		*reply++
+	}
+	return nil
+}
+
 func TestServer(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	cliDec := json.NewDecoder(cli)
-	server := NewApi(new(API))
+	server, err := NewApi(new(API))
+	if err != nil {
+		t.Fatal(err)
+	}
 	go server.ServeConn(srv)
 	cli.Write([]byte(`{"id":1,"method":"API.Add","params":[2,3]}`))
 	var data response
@@ -48,7 +63,10 @@ func TestServerWithTwoSlow(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	cliDec := json.NewDecoder(cli)
-	server := NewApi(new(API))
+	server, err := NewApi(new(API))
+	if err != nil {
+		t.Fatal(err)
+	}
 	go server.ServeConn(srv)
 	cli.Write([]byte(`{"id":1,"method":"API.AddSlow","params":[1,2,50]}`))
 	cli.Write([]byte(`{"id":2,"method":"API.AddSlow","params":[1,3,10]}`))
@@ -82,7 +100,10 @@ func TestServerWithTwoSlow(t *testing.T) {
 func TestClient(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
-	server := NewApi(new(API))
+	server, err := NewApi(new(API))
+	if err != nil {
+		t.Fatal(err)
+	}
 	go server.ServeConn(srv)
 
 	client := NewConn(cli)
@@ -99,5 +120,24 @@ func TestClient(t *testing.T) {
 	// initial seq = 0
 	if client.Seq != 2 {
 		t.Error("seq =", client.Seq)
+	}
+}
+
+func TestCtx(t *testing.T) {
+	cli, srv := net.Pipe()
+	defer cli.Close()
+	cliDec := json.NewDecoder(cli)
+	server, err := NewApiWithCtx(new(APICtx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go server.ServeConnWithCtx(context.Background(), srv)
+	cli.Write([]byte(`{"id":1,"method":"API.Add","params":[2,3]}`))
+	var data response
+	if err := cliDec.Decode(&data); err != nil {
+		t.Fail()
+	}
+	if data.Result.(float64) != 6 {
+		t.Error("result != 6")
 	}
 }

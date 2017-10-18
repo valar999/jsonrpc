@@ -6,9 +6,17 @@ import (
 	"io"
 	"log"
 	"net"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
+	"context"
+)
+
+// keys for ctx
+type key int
+const (
+	connKey key = 0 
 )
 
 var null = json.RawMessage([]byte("null"))
@@ -42,6 +50,7 @@ type method struct {
 	Func       reflect.Value
 	ParamsType reflect.Type
 	ReplyType  reflect.Type
+	ctx        context.Context
 }
 
 type Server struct {
@@ -71,30 +80,88 @@ func NewConn(conn net.Conn) *Server {
 	return server
 }
 
-func NewApi(api interface{}) *Server {
+func getMethods(api interface{}, nIns, inStart int) (methods map[string]method, err error) {
+	methods = make(map[string]method)
 	apiType := reflect.TypeOf(api)
-	methods := make(map[string]method)
 	for i := 0; i < apiType.NumMethod(); i++ {
 		meth := apiType.Method(i)
 		name := meth.Name
+		if meth.Type.NumIn() != nIns {
+			err = fmt.Errorf(
+				"method %s has wrong number of ins: %d",
+				name, meth.Type.NumIn())
+			return
+		}
 		methods[name] = method{
 			Func:       meth.Func,
-			ParamsType: meth.Type.In(1),
-			ReplyType:  meth.Type.In(2),
+			ParamsType: meth.Type.In(inStart + 0),
+			ReplyType:  meth.Type.In(inStart + 1),
 		}
 		// TODO change only first char also
 		methods[strings.ToLower(name)] = methods[name]
 	}
-	return &Server{
+	return
+}
+
+func NewApi(api interface{}) (*Server, error) {
+	methods, err := getMethods(api, 3, 1)
+	if err != nil {
+		return nil, err
+	}
+	server := &Server{
 		api:      reflect.ValueOf(api),
 		methods:  methods,
 		response: make(map[int]chan msg),
 		seqMutex: new(sync.Mutex),
 	}
+	return server, nil
+}
+
+func NewApiWithCtx(api interface{}) (*Server, error) {
+	methods, err := getMethods(api, 4, 2)
+	if err != nil {
+		return nil, err
+	}
+	server := &Server{
+		api:      reflect.ValueOf(api),
+		methods:  methods,
+		response: make(map[int]chan msg),
+		seqMutex: new(sync.Mutex),
+	}
+	return server, nil
+}
+
+func (s *Server) ListenAndServe(address string) error {
+	return s.ListenAndServeWithCtx(nil, address)
+}
+
+func (s *Server) ListenAndServeWithCtx(ctx context.Context, address string) error {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+	return s.ServeWithCtx(ctx, listener)
+}
+
+func (s *Server) Serve(listener net.Listener) error {
+	return s.ServeWithCtx(nil, listener)
+}
+
+func (s *Server) ServeWithCtx(ctx context.Context, listener net.Listener) error {
+	defer listener.Close()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			// TODO handle some not crit error
+			return err
+		}
+		go s.ServeConnWithCtx(ctx, conn)
+	}
+	return nil
 }
 
 // call api method, this function is called from ServeConn()
-func (s *Server) callMethod(conn io.ReadWriteCloser, method method, data msg) {
+func (s *Server) callMethod(ctx context.Context, conn io.ReadWriteCloser, method method, data msg) {
 	params := reflect.New(method.ParamsType)
 	err := json.Unmarshal(data.Params, params.Interface())
 	if err != nil {
@@ -103,8 +170,15 @@ func (s *Server) callMethod(conn io.ReadWriteCloser, method method, data msg) {
 		return
 	}
 	reply := reflect.New(method.ReplyType.Elem())
-	ret := method.Func.Call([]reflect.Value{s.api,
-		reflect.Indirect(params), reply})
+	var ret []reflect.Value
+	if ctx != nil {
+		ret = method.Func.Call([]reflect.Value{s.api,
+			reflect.ValueOf(ctx),
+			reflect.Indirect(params), reply})
+	} else {
+		ret = method.Func.Call([]reflect.Value{s.api,
+			reflect.Indirect(params), reply})
+	}
 	if err := ret[0].Interface(); err != nil {
 		log.Println("err", err)
 		return
@@ -122,7 +196,14 @@ func (s *Server) callMethod(conn io.ReadWriteCloser, method method, data msg) {
 	conn.Write(buf)
 }
 
-func (s *Server) ServeConn(conn io.ReadWriteCloser) {
+func (s *Server) ServeConn(conn io.ReadWriteCloser) error {
+	return s.ServeConnWithCtx(nil, conn)
+}
+
+func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) error {
+	if ctx != nil {
+		ctx = context.WithValue(ctx, connKey, conn)
+	}
 	dec := json.NewDecoder(conn)
 	for {
 		var data msg
@@ -133,7 +214,7 @@ func (s *Server) ServeConn(conn io.ReadWriteCloser) {
 				log.Printf("%v %T", err, err)
 				continue
 			}
-			return
+			return err
 		}
 		if data.Id == nil && data.Method != "" {
 			log.Println("notify")
@@ -154,7 +235,7 @@ func (s *Server) ServeConn(conn io.ReadWriteCloser) {
 			funcParts := strings.Split(data.Method, ".")
 			funcName := funcParts[len(funcParts)-1]
 			method := s.methods[funcName]
-			go s.callMethod(conn, method, data)
+			go s.callMethod(ctx, conn, method, data)
 		}
 	}
 }
