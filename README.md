@@ -15,16 +15,23 @@ Implements [JSON-RPC 1.0](http://www.jsonrpc.org/specification_v1).
 go get github.com/valar999/jsonrpc
 ```
 
-## Usage
+## Example
 ```go
+package main
+
+import "github.com/valar999/jsonrpc"
+
 type API struct {
 }
 
 func (a *API) Add(args [2]int, reply *int) error {
         *reply = args[0] + args[1]
-	return nil
+        return nil
 }
 
-server := NewApi(new(API))
-go server.ListenAndServe()
+func main() {
+        server := jsonrpc.NewApi(new(API))
+	server.ListenAndServe(":3333")
+}
+
 ```
