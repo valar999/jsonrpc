@@ -17,6 +17,9 @@ go get github.com/valar999/jsonrpc
 
 ## Usage
 ```go
+type API struct {
+}
+
 func (a *API) Add(args [2]int, reply *int) error {
         *reply = args[0] + args[1]
 	return nil
