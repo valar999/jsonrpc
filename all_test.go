@@ -10,6 +10,7 @@ import (
 )
 
 type API struct {
+	notify int
 }
 
 func (a *API) Add(args [2]int, reply *int) error {
@@ -23,12 +24,17 @@ func (a *API) AddSlow(args [3]int, reply *int) error {
 	return nil
 }
 
+func (a *API) Notify(args [2]int, reply *int) error {
+	a.notify++
+	return nil
+}
+
 type APICtx struct {
 }
 
 func (a *APICtx) Add(ctx context.Context, args [2]int, reply *int) error {
 	*reply = args[0] + args[1]
-	if ctx.Value(connKey) != nil {
+	if ctx.Value(ConnKey) != nil {
 		*reply++
 	}
 	return nil
@@ -38,8 +44,8 @@ func TestServer(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	cliDec := json.NewDecoder(cli)
-	server, err := NewApi(new(API))
-	if err != nil {
+	server := New()
+	if err := server.Register(new(API)); err != nil {
 		t.Fatal(err)
 	}
 	go server.ServeConn(srv)
@@ -63,8 +69,8 @@ func TestServerWithTwoSlow(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	cliDec := json.NewDecoder(cli)
-	server, err := NewApi(new(API))
-	if err != nil {
+	server := New()
+	if err := server.Register(new(API)); err != nil {
 		t.Fatal(err)
 	}
 	go server.ServeConn(srv)
@@ -97,11 +103,29 @@ func TestServerWithTwoSlow(t *testing.T) {
 	}
 }
 
+func TestNotify(t *testing.T) {
+	cli, srv := net.Pipe()
+	defer cli.Close()
+	api := new(API)
+	server := New()
+	if err := server.Register(api); err != nil {
+		t.Fatal(err)
+	}
+	go server.ServeConn(srv)
+	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
+	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
+	time.Sleep(time.Millisecond * 10)
+	if api.notify != 2 {
+		t.Error("notification doesn't work")
+	}
+}
+
+
 func TestClient(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
-	server, err := NewApi(new(API))
-	if err != nil {
+	server := New()
+	if err := server.Register(new(API)); err != nil {
 		t.Fatal(err)
 	}
 	go server.ServeConn(srv)
@@ -127,17 +151,45 @@ func TestCtx(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	cliDec := json.NewDecoder(cli)
-	server, err := NewApiWithCtx(new(APICtx))
-	if err != nil {
+	server := New()
+	if err := server.Register(new(APICtx)); err != nil {
 		t.Fatal(err)
 	}
 	go server.ServeConnWithCtx(context.Background(), srv)
-	cli.Write([]byte(`{"id":1,"method":"API.Add","params":[2,3]}`))
+	cli.Write([]byte(`{"id":1,"method":"API.add","params":[2,3]}`))
 	var data response
 	if err := cliDec.Decode(&data); err != nil {
 		t.Fail()
 	}
 	if data.Result.(float64) != 6 {
 		t.Error("result != 6")
+	}
+}
+
+func TestSecondAPI(t *testing.T) {
+	server := New()
+	if err := server.Register(new(API)); err != nil {
+		t.Fatal(err)
+	}
+	err := server.Register(new(APICtx))
+	if err == nil {
+		t.Error("registered second api")
+	}
+}
+
+func TestUnknownMethod(t *testing.T) {
+	t.Skip("TODO write this test")
+	cli, srv := net.Pipe()
+	defer cli.Close()
+	cliDec := json.NewDecoder(cli)
+	server := New()
+	if err := server.Register(new(API)); err != nil {
+		t.Fatal(err)
+	}
+	go server.ServeConn(srv)
+	cli.Write([]byte(`{"id":1,"method":"API.AddX","params":[2,3]}`))
+	var data response
+	if err := cliDec.Decode(&data); err != nil {
+		t.Fail()
 	}
 }

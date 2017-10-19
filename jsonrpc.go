@@ -14,10 +14,10 @@ import (
 )
 
 // keys for ctx
-type key int
+type key string
 
 const (
-	connKey key = 0
+	ConnKey key = "conn"
 )
 
 var null = json.RawMessage([]byte("null"))
@@ -55,44 +55,74 @@ type method struct {
 }
 
 type Server struct {
-	api      reflect.Value
-	methods  map[string]method
-	conn     io.ReadWriteCloser
-	response map[int]chan msg
-	Seq      int
-	seqMutex *sync.Mutex
+	api        reflect.Value
+	methods    map[string]method
+	conn       io.ReadWriteCloser
+	NewConnect func(context.Context, io.ReadWriteCloser) (context.Context, error)
+	response   map[int]chan msg
+	Seq        int
+	seqMutex   *sync.Mutex
+	MsgSep     byte
+}
+
+func New() *Server {
+	server := &Server{
+		NewConnect: newConnect,
+		response:   make(map[int]chan msg),
+		seqMutex:   new(sync.Mutex),
+		MsgSep:     10, // "\n"
+	}
+	return server
+}
+
+func (s *Server) Register(api interface{}) error {
+	if s.methods != nil {
+		return errors.New("we can register only one API")
+	}
+	methods, err := getMethods(api)
+	if err != nil {
+		return err
+	}
+	s.api = reflect.ValueOf(api)
+	s.methods = methods
+	return nil
+}
+
+func NewConn(conn io.ReadWriteCloser) *Server {
+	return NewConnWithCtx(nil, conn)
+}
+func NewConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) *Server {
+	server := New()
+	server.conn = conn
+	go server.ServeConnWithCtx(ctx, conn)
+	return server
 }
 
 func Dial(network, address string) (*Server, error) {
+	return DialWithCtx(nil, network, address)
+}
+
+func DialWithCtx(ctx context.Context, network, address string) (*Server, error) {
 	conn, err := net.Dial(network, address)
 	if err != nil {
 		return nil, err
 	}
-	return NewConn(conn), nil
+	return NewConnWithCtx(ctx, conn), nil
 }
 
-func NewConn(conn net.Conn) *Server {
-	server := &Server{
-		conn:     conn,
-		response: make(map[int]chan msg),
-		seqMutex: new(sync.Mutex),
-	}
-	go server.ServeConn(conn)
-	return server
-}
-
-func getMethods(api interface{}, nIns, inStart int) (methods map[string]method, err error) {
+func getMethods(api interface{}) (methods map[string]method, err error) {
 	methods = make(map[string]method)
 	apiType := reflect.TypeOf(api)
 	for i := 0; i < apiType.NumMethod(); i++ {
 		meth := apiType.Method(i)
 		name := meth.Name
-		if meth.Type.NumIn() != nIns {
+		if meth.Type.NumIn() != 3 && meth.Type.NumIn() != 4 {
 			err = fmt.Errorf(
 				"method %s has wrong number of ins: %d",
 				name, meth.Type.NumIn())
 			return
 		}
+		inStart := meth.Type.NumIn() - 2
 		methods[name] = method{
 			Func:       meth.Func,
 			ParamsType: meth.Type.In(inStart + 0),
@@ -104,32 +134,15 @@ func getMethods(api interface{}, nIns, inStart int) (methods map[string]method, 
 	return
 }
 
-func NewApi(api interface{}) (*Server, error) {
-	methods, err := getMethods(api, 3, 1)
-	if err != nil {
-		return nil, err
+func newConnect(ctx context.Context, conn io.ReadWriteCloser) (context.Context, error) {
+	if ctx == nil {
+		return nil, nil
 	}
-	server := &Server{
-		api:      reflect.ValueOf(api),
-		methods:  methods,
-		response: make(map[int]chan msg),
-		seqMutex: new(sync.Mutex),
+	if ctx.Value(ConnKey) == nil {
+		return context.WithValue(ctx, ConnKey, conn), nil
+	} else {
+		return nil, errors.New("conn already in ctx")
 	}
-	return server, nil
-}
-
-func NewApiWithCtx(api interface{}) (*Server, error) {
-	methods, err := getMethods(api, 4, 2)
-	if err != nil {
-		return nil, err
-	}
-	server := &Server{
-		api:      reflect.ValueOf(api),
-		methods:  methods,
-		response: make(map[int]chan msg),
-		seqMutex: new(sync.Mutex),
-	}
-	return server, nil
 }
 
 func (s *Server) ListenAndServe(address string) error {
@@ -184,17 +197,19 @@ func (s *Server) callMethod(ctx context.Context, conn io.ReadWriteCloser, method
 		log.Println("err", err)
 		return
 	}
-	reply = reply.Elem()
-	buf, err := json.Marshal(response{
-		Id:     data.Id,
-		Result: reply.Interface(),
-		Error:  null,
-	})
-	if err != nil {
-		log.Println(err)
-		return
+	if data.Id != nil {
+		reply = reply.Elem()
+		buf, err := json.Marshal(response{
+			Id:     data.Id,
+			Result: reply.Interface(),
+			Error:  null,
+		})
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		conn.Write(append(buf, s.MsgSep))
 	}
-	conn.Write(buf)
 }
 
 func (s *Server) ServeConn(conn io.ReadWriteCloser) error {
@@ -202,8 +217,9 @@ func (s *Server) ServeConn(conn io.ReadWriteCloser) error {
 }
 
 func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) error {
-	if ctx != nil {
-		ctx = context.WithValue(ctx, connKey, conn)
+	ctx, err := s.NewConnect(ctx, conn)
+	if err != nil {
+		return err
 	}
 	dec := json.NewDecoder(conn)
 	for {
@@ -217,9 +233,12 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 			}
 			return err
 		}
-		if data.Id == nil && data.Method != "" {
-			log.Println("notify")
-		} else if data.Method == "" && data.Id != nil {
+		if data.Method == "" {
+			// Response
+			if data.Id == nil {
+				log.Println("wrong response", data)
+				continue
+			}
 			id, ok := data.Id.(float64)
 			if !ok {
 				log.Println("wrong response", data)
@@ -231,7 +250,7 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 				continue
 			}
 			responseChan <- data
-		} else if data.Id != nil {
+		} else {
 			// Request
 			funcParts := strings.Split(data.Method, ".")
 			funcName := funcParts[len(funcParts)-1]
@@ -256,7 +275,7 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	if err != nil {
 		return err
 	}
-	if _, err := s.conn.Write(data); err != nil {
+	if _, err := s.conn.Write(append(data, s.MsgSep)); err != nil {
 		return err
 	}
 	response := <-s.response[id]
@@ -278,7 +297,7 @@ func (s *Server) Notify(method string, args interface{}) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.conn.Write(data); err != nil {
+	if _, err := s.conn.Write(append(data, s.MsgSep)); err != nil {
 		return err
 	}
 	return nil
