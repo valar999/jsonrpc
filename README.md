@@ -30,7 +30,8 @@ func (a *API) Add(args [2]int, reply *int) error {
 }
 
 func main() {
-        server := jsonrpc.NewApi(new(API))
+        server := jsonrpc.New()
+	server.Register(new(API))
 	server.ListenAndServe(":3333")
 }
 
