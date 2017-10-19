@@ -40,6 +40,12 @@ func (a *APICtx) Add(ctx context.Context, args [2]int, reply *int) error {
 	return nil
 }
 
+type responseT struct {
+	Id     interface{}     `json:"id"`
+	Result interface{}     `json:"result"`
+	Error  json.RawMessage `json:"error"`
+}
+
 func TestServer(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
@@ -50,7 +56,7 @@ func TestServer(t *testing.T) {
 	}
 	go server.ServeConn(srv)
 	cli.Write([]byte(`{"id":1,"method":"API.Add","params":[2,3]}`))
-	var data response
+	var data responseT
 	if err := cliDec.Decode(&data); err != nil {
 		t.Fail()
 	}
@@ -114,7 +120,7 @@ func TestNotify(t *testing.T) {
 	go server.ServeConn(srv)
 	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
 	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
-	time.Sleep(time.Millisecond * 10)
+	time.Sleep(time.Millisecond * 20)
 	if api.notify != 2 {
 		t.Error("notification doesn't work")
 	}
@@ -178,7 +184,6 @@ func TestSecondAPI(t *testing.T) {
 }
 
 func TestUnknownMethod(t *testing.T) {
-	t.Skip("TODO write this test")
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	cliDec := json.NewDecoder(cli)
@@ -188,8 +193,14 @@ func TestUnknownMethod(t *testing.T) {
 	}
 	go server.ServeConn(srv)
 	cli.Write([]byte(`{"id":1,"method":"API.AddX","params":[2,3]}`))
-	var data response
+	var data responseT
 	if err := cliDec.Decode(&data); err != nil {
 		t.Fail()
+	}
+	if data.Result != nil {
+		t.Error("result is not null")
+	}
+	if data.Error == nil {
+		t.Error("error is null")
 	}
 }

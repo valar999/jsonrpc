@@ -37,9 +37,9 @@ type request struct {
 }
 
 type response struct {
-	Id     interface{}     `json:"id"`
-	Result interface{}     `json:"result"`
-	Error  json.RawMessage `json:"error"`
+	Id     interface{} `json:"id"`
+	Result interface{} `json:"result"`
+	Error  interface{} `json:"error"`
 }
 
 type notify struct {
@@ -254,10 +254,28 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 			// Request
 			funcParts := strings.Split(data.Method, ".")
 			funcName := funcParts[len(funcParts)-1]
-			method := s.methods[funcName]
-			go s.callMethod(ctx, conn, method, data)
+			method, ok := s.methods[funcName]
+			if ok {
+				go s.callMethod(ctx, conn, method, data)
+			} else {
+				s.sendError(conn, data,
+					"rpc: can't find method " + funcName)
+			}
 		}
 	}
+}
+
+func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
+	buf, err := json.Marshal(response{
+		Id:     data.Id,
+		Result: null,
+		Error:  errmsg,
+	})
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	conn.Write(append(buf, s.MsgSep))
 }
 
 func (s *Server) Call(method string, args interface{}, reply interface{}) error {
