@@ -40,6 +40,19 @@ func (a *APICtx) Add(ctx context.Context, args [2]int, reply *int) error {
 	return nil
 }
 
+type testkey string
+const TestKey testkey = "test"
+
+func (a *APICtx) AddCtxRet(ctx context.Context, args interface{}, reply *int) (context.Context, error) {
+	if ctx.Value(TestKey) == nil {
+		ctx = context.WithValue(ctx, TestKey, true)
+		*reply = 1
+	} else {
+		*reply = 2
+	}
+	return ctx, nil
+}
+
 type responseT struct {
 	Id     interface{}     `json:"id"`
 	Result interface{}     `json:"result"`
@@ -120,12 +133,11 @@ func TestNotify(t *testing.T) {
 	go server.ServeConn(srv)
 	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
 	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
-	time.Sleep(time.Millisecond * 20)
+	time.Sleep(time.Millisecond * 50)
 	if api.notify != 2 {
 		t.Error("notification doesn't work")
 	}
 }
-
 
 func TestClient(t *testing.T) {
 	cli, srv := net.Pipe()
@@ -169,6 +181,34 @@ func TestCtx(t *testing.T) {
 	}
 	if data.Result.(float64) != 6 {
 		t.Error("result != 6")
+	}
+}
+
+func TestCtxReturn(t *testing.T) {
+	cli, srv := net.Pipe()
+	defer cli.Close()
+	cliDec := json.NewDecoder(cli)
+	server := New()
+	if err := server.Register(new(APICtx)); err != nil {
+		t.Fatal(err)
+	}
+	go server.ServeConnWithCtx(context.Background(), srv)
+
+	cli.Write([]byte(`{"id":1,"method":"API.addctxret","params":""}`))
+	var data response
+	if err := cliDec.Decode(&data); err != nil {
+		t.Fail()
+	}
+	if data.Result.(float64) != 1 {
+		t.Error("wrong reply", data.Result)
+	}
+
+	cli.Write([]byte(`{"id":1,"method":"API.addctxret","params":""}`))
+	if err := cliDec.Decode(&data); err != nil {
+		t.Fail()
+	}
+	if data.Result.(float64) != 2 {
+		t.Error("wrong reply", data.Result)
 	}
 }
 

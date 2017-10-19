@@ -175,12 +175,10 @@ func (s *Server) ServeWithCtx(ctx context.Context, listener net.Listener) error 
 }
 
 // call api method, this function is called from ServeConn()
-func (s *Server) callMethod(ctx context.Context, conn io.ReadWriteCloser, method method, data msg) {
+func (s *Server) callMethod(ctx context.Context, ctxChan chan context.Context, conn io.ReadWriteCloser, method method, data msg) {
 	params := reflect.New(method.ParamsType)
-	err := json.Unmarshal(data.Params, params.Interface())
-	if err != nil {
-		// TODO write to conn Error reply
-		log.Println(err)
+	if err := json.Unmarshal(data.Params, params.Interface()); err != nil {
+		//s.sendError(conn, data, err.Error())
 		return
 	}
 	reply := reflect.New(method.ReplyType.Elem())
@@ -193,8 +191,16 @@ func (s *Server) callMethod(ctx context.Context, conn io.ReadWriteCloser, method
 		ret = method.Func.Call([]reflect.Value{s.api,
 			reflect.Indirect(params), reply})
 	}
-	if err := ret[0].Interface(); err != nil {
-		log.Println("err", err)
+	var retErr reflect.Value
+	if len(ret) == 1 {
+		retErr = ret[0]
+	} else if len(ret) == 2 {
+		retErr = ret[1]
+		ctxNew := ret[0].Interface().(context.Context)
+		ctxChan <- ctxNew
+	}
+	if err := retErr.Interface(); err != nil {
+		//s.sendError(conn, data, err.Error())
 		return
 	}
 	if data.Id != nil {
@@ -221,48 +227,68 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 	if err != nil {
 		return err
 	}
-	dec := json.NewDecoder(conn)
+	decChan := s.getJsonDecoder(conn)
+	ctxChan := make(chan context.Context)
 	for {
-		var data msg
-		err := dec.Decode(&data)
-		if err != nil {
-			_, ok := err.(*json.UnmarshalTypeError)
-			if ok {
-				log.Printf("%v %T", err, err)
-				continue
-			}
-			return err
-		}
-		if data.Method == "" {
-			// Response
-			if data.Id == nil {
-				log.Println("wrong response", data)
-				continue
-			}
-			id, ok := data.Id.(float64)
+		select {
+		case ctx = <-ctxChan:
+		case data, ok := <-decChan:
 			if !ok {
-				log.Println("wrong response", data)
-				continue
+				return errors.New("decChan closed")
 			}
-			responseChan := s.response[int(id)]
-			if responseChan == nil {
-				log.Println("no receiver for response", data)
-				continue
-			}
-			responseChan <- data
-		} else {
-			// Request
-			funcParts := strings.Split(data.Method, ".")
-			funcName := funcParts[len(funcParts)-1]
-			method, ok := s.methods[funcName]
-			if ok {
-				go s.callMethod(ctx, conn, method, data)
+			if data.Method == "" {
+				// Response
+				if data.Id == nil {
+					log.Println("wrong response", data)
+					continue
+				}
+				id, ok := data.Id.(float64)
+				if !ok {
+					log.Println("wrong response", data)
+					continue
+				}
+				responseChan := s.response[int(id)]
+				if responseChan == nil {
+					log.Println("no receiver for response", data)
+					continue
+				}
+				responseChan <- data
 			} else {
-				s.sendError(conn, data,
-					"rpc: can't find method " + funcName)
+				// Request
+				funcParts := strings.Split(data.Method, ".")
+				funcName := funcParts[len(funcParts)-1]
+				method, ok := s.methods[funcName]
+				if ok {
+					go s.callMethod(ctx, ctxChan, conn, method, data)
+				} else {
+					s.sendError(conn, data,
+						"rpc: can't find method "+funcName)
+				}
 			}
 		}
 	}
+}
+
+func (s *Server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
+	out := make(chan msg)
+	go func() {
+		dec := json.NewDecoder(conn)
+		for {
+			var data msg
+			err := dec.Decode(&data)
+			if err != nil {
+				_, ok := err.(*json.UnmarshalTypeError)
+				if ok {
+					log.Printf("%v %T", err, err)
+					continue
+				}
+				close(out)
+				return
+			}
+			out <- data
+		}
+	}()
+	return out
 }
 
 func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
