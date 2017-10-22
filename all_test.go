@@ -41,6 +41,7 @@ func (a *APICtx) Add(ctx context.Context, args [2]int, reply *int) error {
 }
 
 type testkey string
+
 const TestKey testkey = "test"
 
 func (a *APICtx) AddCtxRet(ctx context.Context, args interface{}, reply *int) (context.Context, error) {

@@ -31,7 +31,7 @@ type msg struct {
 }
 
 type request struct {
-	Id     int         `json:"id"`
+	Id     uint        `json:"id"`
 	Method string      `json:"method"`
 	Params interface{} `json:"params"`
 }
@@ -59,8 +59,8 @@ type Server struct {
 	methods    map[string]method
 	Conn       io.ReadWriteCloser
 	NewConnect func(context.Context, io.ReadWriteCloser) (context.Context, error)
-	response   map[int]chan msg
-	Seq        int
+	response   map[uint]chan msg
+	Seq        uint
 	seqMutex   *sync.Mutex
 	MsgSep     byte
 }
@@ -68,7 +68,7 @@ type Server struct {
 func New() *Server {
 	server := &Server{
 		NewConnect: newConnect,
-		response:   make(map[int]chan msg),
+		response:   make(map[uint]chan msg),
 		seqMutex:   new(sync.Mutex),
 		MsgSep:     10, // "\n"
 	}
@@ -178,7 +178,7 @@ func (s *Server) ServeWithCtx(ctx context.Context, listener net.Listener) error 
 func (s *Server) callMethod(ctx context.Context, ctxChan chan context.Context, conn io.ReadWriteCloser, method method, data msg) {
 	params := reflect.New(method.ParamsType)
 	if err := json.Unmarshal(data.Params, params.Interface()); err != nil {
-		//s.sendError(conn, data, err.Error())
+		s.sendError(conn, data, err.Error())
 		return
 	}
 	reply := reflect.New(method.ReplyType.Elem())
@@ -200,7 +200,8 @@ func (s *Server) callMethod(ctx context.Context, ctxChan chan context.Context, c
 		ctxChan <- ctxNew
 	}
 	if err := retErr.Interface(); err != nil {
-		//s.sendError(conn, data, err.Error())
+		err := err.(error)
+		s.sendError(conn, data, err.Error())
 		return
 	}
 	if data.Id != nil {
@@ -211,7 +212,7 @@ func (s *Server) callMethod(ctx context.Context, ctxChan chan context.Context, c
 			Error:  null,
 		})
 		if err != nil {
-			log.Println(err)
+			s.sendError(conn, data, err.Error())
 			return
 		}
 		conn.Write(append(buf, s.MsgSep))
@@ -233,6 +234,7 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 		select {
 		case ctx = <-ctxChan:
 		case data, ok := <-decChan:
+			log.Println("ServeConnWithCtx", conn, data, ok)
 			if !ok {
 				return errors.New("decChan closed")
 			}
@@ -247,7 +249,7 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 					log.Println("wrong response", data)
 					continue
 				}
-				responseChan := s.response[int(id)]
+				responseChan := s.response[uint(id)]
 				if responseChan == nil {
 					log.Println("no receiver for response", data)
 					continue
@@ -282,6 +284,7 @@ func (s *Server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
 					log.Printf("%v %T", err, err)
 					continue
 				}
+				log.Println("getJsonDecoder close(out)")
 				close(out)
 				return
 			}
@@ -292,6 +295,7 @@ func (s *Server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
 }
 
 func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
+	log.Println("sendError", conn)
 	buf, err := json.Marshal(response{
 		Id:     data.Id,
 		Result: null,
@@ -322,7 +326,10 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	if _, err := s.Conn.Write(append(data, s.MsgSep)); err != nil {
 		return err
 	}
+	log.Println("Call", s.Conn, s.response[id], method, "wait for reponse")
 	response := <-s.response[id]
+	delete(s.response, id)
+	log.Println("Call", s.Conn, s.response[id], method, "got reponse")
 	if response.Error != "" {
 		return errors.New(response.Error)
 	}
