@@ -43,8 +43,9 @@ type response struct {
 }
 
 type notify struct {
-	Method string      `json:"method"`
-	Params interface{} `json:"params"`
+	Id     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+	Params interface{}     `json:"params"`
 }
 
 type method struct {
@@ -237,8 +238,8 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 			if !ok {
 				if conn == s.Conn {
 					data.Error = "conn closed"
-					for id := range(s.response) {
-						s.response[id] <-data
+					for id := range s.response {
+						s.response[id] <- data
 					}
 				}
 				return errors.New("decChan closed")
@@ -342,6 +343,7 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 
 func (s *Server) Notify(method string, args interface{}) error {
 	req := notify{
+		Id:     null,
 		Method: method,
 		Params: args,
 	}
