@@ -234,8 +234,13 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 		select {
 		case ctx = <-ctxChan:
 		case data, ok := <-decChan:
-			log.Println("ServeConnWithCtx", conn, data, ok)
 			if !ok {
+				if conn == s.Conn {
+					data.Error = "conn closed"
+					for id := range(s.response) {
+						s.response[id] <-data
+					}
+				}
 				return errors.New("decChan closed")
 			}
 			if data.Method == "" {
@@ -284,7 +289,6 @@ func (s *Server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
 					log.Printf("%v %T", err, err)
 					continue
 				}
-				log.Println("getJsonDecoder close(out)")
 				close(out)
 				return
 			}
@@ -295,7 +299,6 @@ func (s *Server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
 }
 
 func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
-	log.Println("sendError", conn)
 	buf, err := json.Marshal(response{
 		Id:     data.Id,
 		Result: null,
@@ -326,10 +329,8 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	if _, err := s.Conn.Write(append(data, s.MsgSep)); err != nil {
 		return err
 	}
-	log.Println("Call", s.Conn, s.response[id], method, "wait for reponse")
 	response := <-s.response[id]
 	delete(s.response, id)
-	log.Println("Call", s.Conn, s.response[id], method, "got reponse")
 	if response.Error != "" {
 		return errors.New(response.Error)
 	}
