@@ -57,7 +57,7 @@ type method struct {
 type Server struct {
 	api        reflect.Value
 	methods    map[string]method
-	conn       io.ReadWriteCloser
+	Conn       io.ReadWriteCloser
 	NewConnect func(context.Context, io.ReadWriteCloser) (context.Context, error)
 	response   map[int]chan msg
 	Seq        int
@@ -93,7 +93,7 @@ func NewConn(conn io.ReadWriteCloser) *Server {
 }
 func NewConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) *Server {
 	server := New()
-	server.conn = conn
+	server.Conn = conn
 	go server.ServeConnWithCtx(ctx, conn)
 	return server
 }
@@ -319,7 +319,7 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	if err != nil {
 		return err
 	}
-	if _, err := s.conn.Write(append(data, s.MsgSep)); err != nil {
+	if _, err := s.Conn.Write(append(data, s.MsgSep)); err != nil {
 		return err
 	}
 	response := <-s.response[id]
@@ -341,7 +341,7 @@ func (s *Server) Notify(method string, args interface{}) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.conn.Write(append(data, s.MsgSep)); err != nil {
+	if _, err := s.Conn.Write(append(data, s.MsgSep)); err != nil {
 		return err
 	}
 	return nil
