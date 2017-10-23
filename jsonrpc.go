@@ -314,6 +314,13 @@ func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
 
 func (s *Server) Call(method string, args interface{}, reply interface{}) error {
 	s.seqMutex.Lock()
+	for {
+		_, ok := s.response[s.Seq]
+		if !ok {
+			break
+		}
+		s.Seq++
+	}
 	id := s.Seq
 	s.Seq++
 	s.response[id] = make(chan msg)
