@@ -263,8 +263,8 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 				responseChan <- data
 			} else {
 				// Request
-				funcParts := strings.Split(data.Method, ".")
-				funcName := funcParts[len(funcParts)-1]
+				funcParts := strings.SplitN(data.Method, ".", 2)
+				funcName := strings.Replace(funcParts[1], ".", "_", -1)
 				method, ok := s.methods[funcName]
 				if ok {
 					go s.callMethod(ctx, ctxChan, conn, method, data)
