@@ -363,3 +363,10 @@ func (s *Server) Notify(method string, args interface{}) error {
 	}
 	return nil
 }
+
+func (s *Server) Close() error {
+	if s.Conn != nil {
+		return s.Conn.Close()
+	}
+	return nil
+}
