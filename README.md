@@ -1,5 +1,7 @@
 # JSON-RPC 1.0 [![GoDoc](https://godoc.org/github.com/valar999/jsonrpc?status.svg)](http://godoc.org/github.com/valar999/jsonrpc) [![Build Status](https://travis-ci.org/valar999/jsonrpc.svg)](https://travis-ci.org/valar999/jsonrpc) [![Coverage Status](https://coveralls.io/repos/valar999/jsonrpc/badge.svg?branch=master&service=github)](https://coveralls.io/github/valar999/jsonrpc?branch=master)
 
+THIS IS BETA!
+
 jsonrpc is a library that support of bidirectional calls and notifies
 
 Implements [JSON-RPC 1.0](http://www.jsonrpc.org/specification_v1).
