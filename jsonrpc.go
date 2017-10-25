@@ -55,7 +55,20 @@ type method struct {
 	ctx        context.Context
 }
 
-type Server struct {
+type Server interface {
+	Register(api interface{}) error
+	ListenAndServe(string) error
+	ListenAndServeWithCtx(context.Context, string) error
+	Serve(net.Listener) error
+	ServeWithCtx(context.Context, net.Listener) error
+	ServeConn(io.ReadWriteCloser) error
+	ServeConnWithCtx(context.Context, io.ReadWriteCloser) error
+	Call(string, interface{}, interface{}) error
+	Notify(string, interface{}) error
+	Close() error
+}
+
+type server struct {
 	api        reflect.Value
 	methods    map[string]method
 	Conn       io.ReadWriteCloser
@@ -66,8 +79,8 @@ type Server struct {
 	MsgSep     byte
 }
 
-func New() *Server {
-	server := &Server{
+func New() *server {
+	server := &server{
 		NewConnect: newConnect,
 		response:   make(map[uint]chan msg),
 		seqMutex:   new(sync.Mutex),
@@ -76,7 +89,7 @@ func New() *Server {
 	return server
 }
 
-func (s *Server) Register(api interface{}) error {
+func (s *server) Register(api interface{}) error {
 	if s.methods != nil {
 		return errors.New("we can register only one API")
 	}
@@ -89,21 +102,21 @@ func (s *Server) Register(api interface{}) error {
 	return nil
 }
 
-func NewConn(conn io.ReadWriteCloser) *Server {
+func NewConn(conn io.ReadWriteCloser) *server {
 	return NewConnWithCtx(nil, conn)
 }
-func NewConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) *Server {
+func NewConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) *server {
 	server := New()
 	server.Conn = conn
 	go server.ServeConnWithCtx(ctx, conn)
 	return server
 }
 
-func Dial(network, address string) (*Server, error) {
+func Dial(network, address string) (*server, error) {
 	return DialWithCtx(nil, network, address)
 }
 
-func DialWithCtx(ctx context.Context, network, address string) (*Server, error) {
+func DialWithCtx(ctx context.Context, network, address string) (*server, error) {
 	conn, err := net.Dial(network, address)
 	if err != nil {
 		return nil, err
@@ -146,11 +159,11 @@ func newConnect(ctx context.Context, conn io.ReadWriteCloser) (context.Context, 
 	}
 }
 
-func (s *Server) ListenAndServe(address string) error {
+func (s *server) ListenAndServe(address string) error {
 	return s.ListenAndServeWithCtx(nil, address)
 }
 
-func (s *Server) ListenAndServeWithCtx(ctx context.Context, address string) error {
+func (s *server) ListenAndServeWithCtx(ctx context.Context, address string) error {
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
@@ -158,11 +171,11 @@ func (s *Server) ListenAndServeWithCtx(ctx context.Context, address string) erro
 	return s.ServeWithCtx(ctx, listener)
 }
 
-func (s *Server) Serve(listener net.Listener) error {
+func (s *server) Serve(listener net.Listener) error {
 	return s.ServeWithCtx(nil, listener)
 }
 
-func (s *Server) ServeWithCtx(ctx context.Context, listener net.Listener) error {
+func (s *server) ServeWithCtx(ctx context.Context, listener net.Listener) error {
 	defer listener.Close()
 	for {
 		conn, err := listener.Accept()
@@ -176,7 +189,7 @@ func (s *Server) ServeWithCtx(ctx context.Context, listener net.Listener) error 
 }
 
 // call api method, this function is called from ServeConn()
-func (s *Server) callMethod(ctx context.Context, ctxChan chan context.Context, conn io.ReadWriteCloser, method method, data msg) {
+func (s *server) callMethod(ctx context.Context, ctxChan chan context.Context, conn io.ReadWriteCloser, method method, data msg) {
 	params := reflect.New(method.ParamsType)
 	if err := json.Unmarshal(data.Params, params.Interface()); err != nil {
 		s.sendError(conn, data, err.Error())
@@ -220,11 +233,11 @@ func (s *Server) callMethod(ctx context.Context, ctxChan chan context.Context, c
 	}
 }
 
-func (s *Server) ServeConn(conn io.ReadWriteCloser) error {
+func (s *server) ServeConn(conn io.ReadWriteCloser) error {
 	return s.ServeConnWithCtx(nil, conn)
 }
 
-func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) error {
+func (s *server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) error {
 	ctx, err := s.NewConnect(ctx, conn)
 	if err != nil {
 		return err
@@ -277,7 +290,7 @@ func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) 
 	}
 }
 
-func (s *Server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
+func (s *server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
 	out := make(chan msg)
 	go func() {
 		dec := json.NewDecoder(conn)
@@ -299,7 +312,7 @@ func (s *Server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
 	return out
 }
 
-func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
+func (s *server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
 	buf, err := json.Marshal(response{
 		Id:     data.Id,
 		Result: null,
@@ -312,7 +325,7 @@ func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
 	conn.Write(append(buf, s.MsgSep))
 }
 
-func (s *Server) Call(method string, args interface{}, reply interface{}) error {
+func (s *server) Call(method string, args interface{}, reply interface{}) error {
 	s.seqMutex.Lock()
 	for {
 		_, ok := s.response[s.Seq]
@@ -348,7 +361,7 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	return nil
 }
 
-func (s *Server) Notify(method string, args interface{}) error {
+func (s *server) Notify(method string, args interface{}) error {
 	req := notify{
 		Id:     null,
 		Method: method,
@@ -364,7 +377,7 @@ func (s *Server) Notify(method string, args interface{}) error {
 	return nil
 }
 
-func (s *Server) Close() error {
+func (s *server) Close() error {
 	if s.Conn != nil {
 		return s.Conn.Close()
 	}
