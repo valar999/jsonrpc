@@ -1,7 +1,6 @@
 package jsonrpc
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,12 +12,94 @@ import (
 	"sync"
 )
 
-// keys for ctx
-type key string
+type APIFactory interface {
+	NewConn(conn io.ReadWriteCloser) interface{}
+}
 
-const (
-	ConnKey key = "conn"
-)
+type Server struct {
+	apiFactory APIFactory
+}
+
+type Conn struct {
+	api     reflect.Value
+	methods map[string]method
+	conn       io.ReadWriteCloser
+	pending   map[uint]*callType
+	Seq      uint
+	seqMutex sync.Mutex
+}
+
+func NewServer(api APIFactory) *Server {
+	return &Server{
+		apiFactory: api,
+	}
+}
+
+func NewConn(conn io.ReadWriteCloser) *Conn {
+	return &Conn{
+		conn:    conn,
+		pending: make(map[uint]*callType),
+	}
+}
+
+func (s *Server) ListenAndServe(address string) error {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+	return s.Serve(listener)
+}
+
+func (s *Server) Serve(listener net.Listener) error {
+	defer listener.Close()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			// TODO handle some not crit error
+			return err
+		}
+		c := NewConn(conn)
+		api := s.apiFactory.NewConn(conn)
+		c.Register(api)
+		go c.Serve()
+	}
+	return nil
+}
+
+// call api method, this function is called from ServeConn()
+func (c *Conn) callMethod(method method, data msg) {
+	params := reflect.New(method.ParamsType)
+	if err := json.Unmarshal(data.Params, params.Interface()); err != nil {
+		c.sendError(data, err.Error())
+		return
+	}
+	reply := reflect.New(method.ReplyType.Elem())
+	var ret []reflect.Value
+	ret = method.Func.Call([]reflect.Value{c.api,
+		reflect.Indirect(params), reply})
+	var retErr reflect.Value
+	retErr = ret[0]
+	if err := retErr.Interface(); err != nil {
+		err := err.(error)
+		c.sendError(data, err.Error())
+		return
+	}
+	if data.Id != nil {
+		reply = reply.Elem()
+		buf, err := json.Marshal(response{
+			Id:     data.Id,
+			Result: reply.Interface(),
+			Error:  null,
+		})
+		if err != nil {
+			c.sendError(data, err.Error())
+			return
+		}
+		c.conn.Write(append(buf, msgSep))
+	}
+}
+
+const msgSep byte = 10
 
 var null = json.RawMessage([]byte("null"))
 
@@ -52,266 +133,88 @@ type method struct {
 	Func       reflect.Value
 	ParamsType reflect.Type
 	ReplyType  reflect.Type
-	ctx        context.Context
 }
 
-type ServerInterface interface {
-	Register(api interface{}) error
-	ListenAndServe(string) error
-	ListenAndServeWithCtx(context.Context, string) error
-	Serve(net.Listener) error
-	ServeWithCtx(context.Context, net.Listener) error
-	ServeConn(io.ReadWriteCloser) error
-	ServeConnWithCtx(context.Context, io.ReadWriteCloser) error
-	Call(string, interface{}, interface{}) error
-	Notify(string, interface{}) error
-	Close() error
+type Error string
+
+func (e Error) Error() string {
+	return string(e)
 }
 
-type Server struct {
-	api        reflect.Value
-	methods    map[string]method
-	Conn       io.ReadWriteCloser
-	NewConnect func(context.Context, io.ReadWriteCloser) (context.Context, error)
-	response   map[uint]chan msg
-	Seq        uint
-	seqMutex   sync.Mutex
-	MsgSep     byte
+type callType struct {
+	method string
+	args   interface{}
+	reply  interface{}
+	err    error
+	doneChan chan *callType
 }
 
-func New() *Server {
-	server := &Server{
-		NewConnect: newConnect,
-		response:   make(map[uint]chan msg),
-		MsgSep:     10, // "\n"
-	}
-	return server
-}
-
-func (s *Server) Register(api interface{}) error {
-	if s.methods != nil {
-		return errors.New("we can register only one API")
-	}
-	methods, err := getMethods(api)
-	if err != nil {
-		return err
-	}
-	s.api = reflect.ValueOf(api)
-	s.methods = methods
-	return nil
-}
-
-func NewConn(conn io.ReadWriteCloser) *Server {
-	return NewConnWithCtx(nil, conn)
-}
-func NewConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) *Server {
-	server := New()
-	server.Conn = conn
-	//go server.ServeConnWithCtx(ctx, conn)
-	return server
-}
-
-func Dial(network, address string) (*Server, error) {
-	return DialWithCtx(nil, network, address)
-}
-
-func DialWithCtx(ctx context.Context, network, address string) (*Server, error) {
-	conn, err := net.Dial(network, address)
-	if err != nil {
-		return nil, err
-	}
-	return NewConnWithCtx(ctx, conn), nil
-}
-
-func getMethods(api interface{}) (methods map[string]method, err error) {
-	methods = make(map[string]method)
-	apiType := reflect.TypeOf(api)
-	for i := 0; i < apiType.NumMethod(); i++ {
-		meth := apiType.Method(i)
-		name := meth.Name
-		if meth.Type.NumIn() != 3 && meth.Type.NumIn() != 4 {
-			err = fmt.Errorf(
-				"method %s has wrong number of ins: %d",
-				name, meth.Type.NumIn())
-			return
-		}
-		inStart := meth.Type.NumIn() - 2
-		methods[name] = method{
-			Func:       meth.Func,
-			ParamsType: meth.Type.In(inStart + 0),
-			ReplyType:  meth.Type.In(inStart + 1),
-		}
-		// TODO change only first char also
-		methods[strings.ToLower(name)] = methods[name]
-	}
-	return
-}
-
-func newConnect(ctx context.Context, conn io.ReadWriteCloser) (context.Context, error) {
-	if ctx == nil {
-		return nil, nil
-	}
-	if ctx.Value(ConnKey) == nil {
-		return context.WithValue(ctx, ConnKey, conn), nil
-	} else {
-		return nil, errors.New("conn already in ctx")
-	}
-}
-
-func (s *Server) ListenAndServe(address string) error {
-	return s.ListenAndServeWithCtx(nil, address)
-}
-
-func (s *Server) ListenAndServeWithCtx(ctx context.Context, address string) error {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return err
-	}
-	return s.ServeWithCtx(ctx, listener)
-}
-
-func (s *Server) Serve(listener net.Listener) error {
-	return s.ServeWithCtx(nil, listener)
-}
-
-func (s *Server) ServeWithCtx(ctx context.Context, listener net.Listener) error {
-	defer listener.Close()
+func (c *Conn) Serve() error {
+	dec := json.NewDecoder(c.conn)
 	for {
-		conn, err := listener.Accept()
+		var data msg
+		err := dec.Decode(&data)
 		if err != nil {
-			// TODO handle some not crit error
-			return err
+			if err == io.EOF {
+				return err
+			}
+			switch err.(type) {
+			case *json.UnmarshalTypeError:
+				log.Printf("%v %T", err, err)
+				continue
+			default:
+				log.Println(err)
+			}
 		}
-		go s.ServeConnWithCtx(ctx, conn)
-	}
-	return nil
-}
-
-// call api method, this function is called from ServeConn()
-func (s *Server) callMethod(ctx context.Context, ctxChan chan context.Context, conn io.ReadWriteCloser, method method, data msg) {
-	params := reflect.New(method.ParamsType)
-	if err := json.Unmarshal(data.Params, params.Interface()); err != nil {
-		s.sendError(conn, data, err.Error())
-		return
-	}
-	reply := reflect.New(method.ReplyType.Elem())
-	var ret []reflect.Value
-	if ctx != nil {
-		ret = method.Func.Call([]reflect.Value{s.api,
-			reflect.ValueOf(ctx),
-			reflect.Indirect(params), reply})
-	} else {
-		ret = method.Func.Call([]reflect.Value{s.api,
-			reflect.Indirect(params), reply})
-	}
-	var retErr reflect.Value
-	if len(ret) == 1 {
-		retErr = ret[0]
-	} else if len(ret) == 2 {
-		retErr = ret[1]
-		ctxNew := ret[0].Interface().(context.Context)
-		ctxChan <- ctxNew
-	}
-	if err := retErr.Interface(); err != nil {
-		err := err.(error)
-		s.sendError(conn, data, err.Error())
-		return
-	}
-	if data.Id != nil {
-		reply = reply.Elem()
-		buf, err := json.Marshal(response{
-			Id:     data.Id,
-			Result: reply.Interface(),
-			Error:  null,
-		})
-		if err != nil {
-			s.sendError(conn, data, err.Error())
-			return
-		}
-		conn.Write(append(buf, s.MsgSep))
-	}
-}
-
-func (s *Server) ServeConn(conn io.ReadWriteCloser) error {
-	return s.ServeConnWithCtx(nil, conn)
-}
-
-func (s *Server) ServeConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) error {
-	ctx, err := s.NewConnect(ctx, conn)
-	if err != nil {
-		return err
-	}
-	decChan := s.getJsonDecoder(conn)
-	ctxChan := make(chan context.Context)
-	for {
-		select {
-		case ctx = <-ctxChan:
-		case data, ok := <-decChan:
+		if data.Method == "" {
+			// Response
+			if data.Id == nil {
+				log.Println("rpc: wrong response, no id", data)
+				continue
+			}
+			id, ok := data.Id.(float64)
 			if !ok {
-				if conn == s.Conn {
-					data.Error = "conn closed"
-					for id := range s.response {
-						s.response[id] <- data
-					}
-				}
-				return errors.New("decChan closed")
+				log.Println("rpc: wrong response, id not int",
+					data)
+				continue
 			}
-			if data.Method == "" {
-				// Response
-				if data.Id == nil {
-					log.Println("wrong response", data)
-					continue
-				}
-				id, ok := data.Id.(float64)
-				if !ok {
-					log.Println("wrong response", data)
-					continue
-				}
-				responseChan := s.response[uint(id)]
-				if responseChan == nil {
-					log.Println("no receiver for response", data)
-					continue
-				}
-				responseChan <- data
+			call := c.pending[uint(id)]
+			if call == nil {
+				log.Println("rpc: no receiver for response",
+					data)
+				continue
+			}
+			if data.Error == "" {
+				call.reply = data.Result
 			} else {
-				// Request
-				funcParts := strings.SplitN(data.Method, ".", 2)
-				funcName := strings.Replace(funcParts[1], ".", "_", -1)
-				method, ok := s.methods[funcName]
-				if ok {
-					go s.callMethod(ctx, ctxChan, conn, method, data)
-				} else {
-					s.sendError(conn, data,
-						"rpc: can't find method "+funcName)
-				}
+				call.err = Error(data.Error)
+			}
+			call.done()
+		} else {
+			// Request
+			funcParts := strings.SplitN(data.Method, ".", 2)
+			funcName := strings.Replace(funcParts[1], ".", "_", -1)
+			method, ok := c.methods[funcName]
+			if ok {
+				go c.callMethod(method, data)
+			} else {
+				c.sendError(data,
+					"rpc: can't find method " + funcName)
 			}
 		}
 	}
 }
 
-func (s *Server) getJsonDecoder(conn io.ReadWriteCloser) <-chan msg {
-	out := make(chan msg)
-	go func() {
-		dec := json.NewDecoder(conn)
-		for {
-			var data msg
-			err := dec.Decode(&data)
-			if err != nil {
-				_, ok := err.(*json.UnmarshalTypeError)
-				if ok {
-					log.Printf("%v %T", err, err)
-					continue
-				}
-				close(out)
-				return
-			}
-			out <- data
-		}
-	}()
-	return out
+func (call *callType) done() {
+	select {
+	case call.doneChan <- call:
+		// ok
+	default:
+		log.Println("rpc: insufficient doneChan capacity")
+	}
 }
 
-func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
+func (c *Conn) sendError(data msg, errmsg string) {
 	buf, err := json.Marshal(response{
 		Id:     data.Id,
 		Result: null,
@@ -321,22 +224,29 @@ func (s *Server) sendError(conn io.ReadWriteCloser, data msg, errmsg string) {
 		log.Fatal(err)
 		return
 	}
-	conn.Write(append(buf, s.MsgSep))
+	c.conn.Write(append(buf, msgSep))
 }
 
-func (s *Server) Call(method string, args interface{}, reply interface{}) error {
-	s.seqMutex.Lock()
-	for {
-		_, ok := s.response[s.Seq]
-		if !ok {
-			break
-		}
-		s.Seq++
+func (c *Conn) Go(method string, args interface{}, reply interface{}, doneChan chan *callType) *callType {
+	call := &callType{
+		method: method,
+		args:   args,
+		reply:  reply,
 	}
-	id := s.Seq
-	s.Seq++
-	s.response[id] = make(chan msg)
-	s.seqMutex.Unlock()
+	if doneChan == nil {
+		doneChan = make(chan *callType, 10) // buffered.
+	} else {
+		if cap(doneChan) == 0 {
+			log.Panic("rpc: done channel is unbuffered")
+		}
+	}
+	call.doneChan = doneChan
+
+	c.seqMutex.Lock()
+	id := c.Seq
+	c.Seq++
+	c.seqMutex.Unlock()
+
 	req := request{
 		Id:     id,
 		Method: method,
@@ -344,23 +254,23 @@ func (s *Server) Call(method string, args interface{}, reply interface{}) error 
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
-		return err
+		call.err = err
+		return call
 	}
-	if _, err := s.Conn.Write(append(data, s.MsgSep)); err != nil {
-		return err
+	if _, err := c.conn.Write(append(data, msgSep)); err != nil {
+		call.err = err
+		return call
 	}
-	response := <-s.response[id]
-	delete(s.response, id)
-	if response.Error != "" {
-		return errors.New(response.Error)
-	}
-	if err := json.Unmarshal(response.Result, reply); err != nil {
-		return err
-	}
-	return nil
+	c.pending[id] = call
+	return call
 }
 
-func (s *Server) Notify(method string, args interface{}) error {
+func (c *Conn) Call(method string, args interface{}, reply interface{}) error {
+	call := <-c.Go(method, args, reply, make(chan *callType, 1)).doneChan
+	return call.err
+}
+
+func (c *Conn) Notify(method string, args interface{}) error {
 	req := notify{
 		Id:     null,
 		Method: method,
@@ -370,15 +280,61 @@ func (s *Server) Notify(method string, args interface{}) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.Conn.Write(append(data, s.MsgSep)); err != nil {
+	if _, err := c.conn.Write(append(data, msgSep)); err != nil {
 		return err
 	}
 	return nil
 }
 
+/*
 func (s *Server) Close() error {
 	if s.Conn != nil {
 		return s.Conn.Close()
 	}
+	return nil
+}
+*/
+
+func getMethods(api interface{}) (methods map[string]method, err error) {
+	methods = make(map[string]method)
+	apiType := reflect.TypeOf(api)
+	for i := 0; i < apiType.NumMethod(); i++ {
+		meth := apiType.Method(i)
+		name := meth.Name
+		if meth.Type.NumIn() != 3 {
+			err = fmt.Errorf(
+				"method %s has wrong number of ins: %d",
+				name, meth.Type.NumIn())
+			return
+		}
+		methods[name] = method{
+			Func:       meth.Func,
+			ParamsType: meth.Type.In(1),
+			ReplyType:  meth.Type.In(2),
+		}
+		// TODO change only first char also
+		methods[strings.ToLower(name)] = methods[name]
+	}
+	return
+}
+
+func Dial(network, address string) (*Conn, error) {
+	conn, err := net.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	return NewConn(conn), nil
+}
+
+func (c *Conn) Register(api interface{}) error {
+	if c.methods != nil {
+		return errors.New("we can register only one API")
+	}
+	methods, err := getMethods(api)
+	if err != nil {
+		return err
+	}
+	c.api = reflect.ValueOf(api)
+	c.methods = methods
 	return nil
 }
