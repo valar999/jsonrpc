@@ -107,7 +107,7 @@ func NewConn(conn io.ReadWriteCloser) *Server {
 func NewConnWithCtx(ctx context.Context, conn io.ReadWriteCloser) *Server {
 	server := New()
 	server.Conn = conn
-	go server.ServeConnWithCtx(ctx, conn)
+	//go server.ServeConnWithCtx(ctx, conn)
 	return server
 }
 
