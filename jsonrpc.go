@@ -75,7 +75,7 @@ type Server struct {
 	NewConnect func(context.Context, io.ReadWriteCloser) (context.Context, error)
 	response   map[uint]chan msg
 	Seq        uint
-	seqMutex   *sync.Mutex
+	seqMutex   sync.Mutex
 	MsgSep     byte
 }
 
@@ -83,7 +83,6 @@ func New() *Server {
 	server := &Server{
 		NewConnect: newConnect,
 		response:   make(map[uint]chan msg),
-		seqMutex:   new(sync.Mutex),
 		MsgSep:     10, // "\n"
 	}
 	return server
