@@ -3,10 +3,18 @@ package jsonrpc
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net"
 	"testing"
 	"time"
 )
+
+type TestAPIFactory struct {
+}
+
+func (f *TestAPIFactory) NewConn(conn io.ReadWriteCloser) interface{} {
+	return new(API)
+}
 
 type API struct {
 	notify int
@@ -35,6 +43,19 @@ type responseT struct {
 }
 
 func TestServer(t *testing.T) {
+	server := NewServer(new(TestAPIFactory))
+	listener, _ := net.Listen("tcp", "localhost:0")
+	go server.Serve(listener)
+
+	client, _ := Dial("tcp", listener.Addr().String())
+	var reply int
+	client.Call("API.Add", [2]int{1, 2}, &reply)
+	if reply != 3 {
+		t.Error("wrong call reply", reply)
+	}
+}
+
+func TestServerConn(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	cliDec := json.NewDecoder(cli)
@@ -59,7 +80,7 @@ func TestServer(t *testing.T) {
 	}
 }
 
-func TestServerWithTwoSlow(t *testing.T) {
+func TestServerConnWithTwoSlow(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	cliDec := json.NewDecoder(cli)
@@ -124,6 +145,7 @@ func TestClient(t *testing.T) {
 	go server.Serve()
 
 	client := NewConn(cli)
+	go client.Serve()
 	var reply int
 	if err := client.Call("API.Add", [2]int{1, 2}, &reply); err != nil {
 		t.Error(err)
@@ -137,6 +159,9 @@ func TestClient(t *testing.T) {
 	// initial seq = 0
 	if client.Seq != 2 {
 		t.Error("seq =", client.Seq)
+	}
+	if len(client.pending) != 0 {
+		t.Error("pending not empty")
 	}
 }
 
@@ -172,5 +197,34 @@ func TestUnknownMethod(t *testing.T) {
 	}
 	if data.Error == nil {
 		t.Error("error is null")
+	}
+}
+
+func TestClosedClientConn(t *testing.T) {
+	listener, _ := net.Listen("tcp", "localhost:0")
+	client, _ := Dial("tcp", listener.Addr().String())
+	var reply int
+	client.Go("API.AddSlow", [3]int{1, 2, 50}, &reply, nil)
+	conn, _ := listener.Accept()
+	c := NewConn(conn)
+	api := new(API)
+	c.Register(api)
+	client.Close()
+	err := c.Serve()
+	if err != io.EOF {
+		t.Error("Serve() return", err)
+	}
+}
+
+func TestClosedServerConn(t *testing.T) {
+	listener, _ := net.Listen("tcp", "localhost:0")
+	client, _ := Dial("tcp", listener.Addr().String())
+	var reply int
+	call := client.Go("API.AddSlow", [3]int{1, 2, 50}, &reply, nil)
+	conn, _ := listener.Accept()
+	conn.Close()
+	<-call.Done
+	if call.Error != io.EOF {
+		t.Error("call return", call.Error)
 	}
 }
