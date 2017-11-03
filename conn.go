@@ -79,6 +79,9 @@ func NewConn(conn io.ReadWriteCloser) *Conn {
 }
 
 func (c *Conn) Serve() error {
+	if c.conn == nil {
+		return nil
+	}
 	dec := json.NewDecoder(c.conn)
 	for {
 		var data msg

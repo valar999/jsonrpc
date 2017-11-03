@@ -40,5 +40,4 @@ func (s *Server) Serve(listener net.Listener) error {
 		c.Register(api)
 		go c.Serve()
 	}
-	return nil
 }

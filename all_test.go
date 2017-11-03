@@ -202,6 +202,7 @@ func TestUnknownMethod(t *testing.T) {
 
 func TestClosedClientConn(t *testing.T) {
 	listener, _ := net.Listen("tcp", "localhost:0")
+	defer listener.Close()
 	client, _ := Dial("tcp", listener.Addr().String())
 	var reply int
 	client.Go("API.AddSlow", [3]int{1, 2, 50}, &reply, nil)
@@ -218,13 +219,15 @@ func TestClosedClientConn(t *testing.T) {
 
 func TestClosedServerConn(t *testing.T) {
 	listener, _ := net.Listen("tcp", "localhost:0")
+	defer listener.Close()
 	client, _ := Dial("tcp", listener.Addr().String())
 	var reply int
 	call := client.Go("API.AddSlow", [3]int{1, 2, 50}, &reply, nil)
 	conn, _ := listener.Accept()
 	conn.Close()
 	<-call.Done
-	if call.Error != io.EOF {
-		t.Error("call return", call.Error)
+	_, ok := call.Error.(*net.OpError)
+	if !ok && call.Error != io.EOF {
+		t.Errorf("call return %T", call.Error)
 	}
 }
