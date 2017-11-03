@@ -16,10 +16,14 @@ type Conn struct {
 	api      reflect.Value
 	methods  map[string]method
 	conn     io.ReadWriteCloser
-	pending  map[uint]*Call
-	Seq      uint
 	seqMutex sync.Mutex
+	Seq      uint
+	mutex    sync.Mutex
+	pending  map[uint]*Call
+	closing  bool
 }
+
+var ErrClosed = errors.New("connection is closed")
 
 const msgSep byte = 10
 
@@ -92,6 +96,9 @@ func (c *Conn) Serve() error {
 				log.Printf("%v %T", err, err)
 				continue
 			default:
+				c.mutex.Lock()
+				c.closing = true
+				c.mutex.Unlock()
 				for id, call := range c.pending {
 					delete(c.pending, id)
 					call.Error = err
@@ -199,6 +206,7 @@ func (call *Call) done() {
 }
 
 func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan *Call) *Call {
+	c.mutex.Lock()
 	call := &Call{
 		method: method,
 		args:   args,
@@ -212,11 +220,17 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 		}
 	}
 	call.Done = done
-
+	if c.closing {
+		call.Error = ErrClosed
+		call.done()
+		return call
+	}
 	c.seqMutex.Lock()
 	id := c.Seq
 	c.Seq++
 	c.seqMutex.Unlock()
+	c.pending[id] = call
+	c.mutex.Unlock()
 
 	req := request{
 		Id:     id,
@@ -228,9 +242,10 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 		call.Error = err
 		return call
 	}
-	c.pending[id] = call
 	if _, err := c.conn.Write(append(data, msgSep)); err != nil {
 		call.Error = err
+		delete(c.pending, id)
+		call.done()
 		return call
 	}
 	return call
@@ -304,6 +319,9 @@ func Dial(network, address string) (*Conn, error) {
 }
 
 func (c *Conn) Close() error {
+	c.mutex.Lock()
+	c.closing = true
+	c.mutex.Unlock()
 	if c.conn != nil {
 		err := c.conn.Close()
 		c.conn = nil

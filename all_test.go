@@ -222,9 +222,9 @@ func TestClosedServerConn(t *testing.T) {
 	defer listener.Close()
 	client, _ := Dial("tcp", listener.Addr().String())
 	var reply int
+	srv, _ := listener.Accept()
 	call := client.Go("API.AddSlow", [3]int{1, 2, 50}, &reply, nil)
-	conn, _ := listener.Accept()
-	conn.Close()
+	srv.Close()
 	<-call.Done
 	_, ok := call.Error.(*net.OpError)
 	if !ok && call.Error != io.EOF {
@@ -233,11 +233,11 @@ func TestClosedServerConn(t *testing.T) {
 }
 
 func TestClosedServerConn2(t *testing.T) {
-	listener, _ := net.Listen("tcp", "localhost:0")
+	listener, _ := net.Listen("tcp", "localhost:3333")
 	defer listener.Close()
 	client, _ := Dial("tcp", listener.Addr().String())
-	conn, _ := listener.Accept()
-	conn.Close()
+	srv, _ := listener.Accept()
+	srv.Close()
 	var reply int
 	err := client.Call("API.Add", [3]int{1, 2}, &reply)
 	if err != io.EOF {
