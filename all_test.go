@@ -12,7 +12,7 @@ import (
 type TestAPIFactory struct {
 }
 
-func (f *TestAPIFactory) NewConn(conn io.ReadWriteCloser) interface{} {
+func (f *TestAPIFactory) NewConn(conn *Conn) interface{} {
 	return new(API)
 }
 

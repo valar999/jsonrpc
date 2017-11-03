@@ -1,12 +1,11 @@
 package jsonrpc
 
 import (
-	"io"
 	"net"
 )
 
 type APIFactory interface {
-	NewConn(conn io.ReadWriteCloser) interface{}
+	NewConn(conn *Conn) interface{}
 }
 
 type Server struct {
@@ -36,7 +35,7 @@ func (s *Server) Serve(listener net.Listener) error {
 			return err
 		}
 		c := NewConn(conn)
-		api := s.apiFactory.NewConn(conn)
+		api := s.apiFactory.NewConn(c)
 		c.Register(api)
 		go c.Serve()
 	}
