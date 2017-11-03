@@ -231,3 +231,16 @@ func TestClosedServerConn(t *testing.T) {
 		t.Errorf("call return %T", call.Error)
 	}
 }
+
+func TestClosedServerConn2(t *testing.T) {
+	listener, _ := net.Listen("tcp", "localhost:0")
+	defer listener.Close()
+	client, _ := Dial("tcp", listener.Addr().String())
+	conn, _ := listener.Accept()
+	conn.Close()
+	var reply int
+	err := client.Call("API.Add", [3]int{1, 2}, &reply)
+	if err != io.EOF {
+		t.Errorf("call return %T", err)
+	}
+}
