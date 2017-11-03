@@ -21,20 +21,27 @@ go get github.com/valar999/jsonrpc
 ```go
 package main
 
-import "github.com/valar999/jsonrpc"
+import (
+	"github.com/valar999/jsonrpc"
+	"io"
+)
 
-type API struct {
-}
+type API int
 
 func (a *API) Add(args [2]int, reply *int) error {
-        *reply = args[0] + args[1]
-        return nil
+	*reply = args[0] + args[1]
+	return nil
+}
+
+type Factory struct {
+}
+
+func (f *Factory) NewConn(conn io.ReadWriteCloser) interface{} {
+	return new(API)
 }
 
 func main() {
-        server := jsonrpc.New()
-	server.Register(new(API))
+	server := jsonrpc.NewServer(new(Factory))
 	server.ListenAndServe(":3333")
 }
-
 ```
