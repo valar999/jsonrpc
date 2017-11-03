@@ -36,7 +36,9 @@ func (s *Server) Serve(listener net.Listener) error {
 		}
 		c := NewConn(conn)
 		api := s.apiFactory.NewConn(c)
-		c.Register(api)
+		if err := c.Register(api); err != nil {
+			return err
+		}
 		go c.Serve()
 	}
 }
