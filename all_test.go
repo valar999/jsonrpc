@@ -129,7 +129,7 @@ func TestNotify(t *testing.T) {
 	go server.Serve()
 	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
 	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
-	time.Sleep(time.Millisecond * 50)
+	time.Sleep(time.Millisecond * 100)
 	if api.notify != 2 {
 		t.Error("notification doesn't work")
 	}

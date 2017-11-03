@@ -225,11 +225,11 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 		call.Error = err
 		return call
 	}
+	c.pending[id] = call
 	if _, err := c.conn.Write(append(data, msgSep)); err != nil {
 		call.Error = err
 		return call
 	}
-	c.pending[id] = call
 	return call
 }
 
