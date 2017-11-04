@@ -7,6 +7,7 @@ import (
 	"net"
 	"testing"
 	"time"
+	"sync"
 )
 
 type TestAPIFactory struct {
@@ -17,7 +18,9 @@ func (f *TestAPIFactory) NewConn(conn *Conn) interface{} {
 }
 
 type API struct {
+	notifyChan chan int
 	notify int
+	mutex sync.Mutex
 }
 
 func (a *API) Add(args [2]int, reply *int) error {
@@ -31,8 +34,12 @@ func (a *API) AddSlow(args [3]int, reply *int) error {
 	return nil
 }
 
+
 func (a *API) Notify(args [2]int, reply *int) error {
+	a.mutex.Lock()
 	a.notify++
+	a.mutex.Unlock()
+	a.notifyChan <- a.notify
 	return nil
 }
 
@@ -122,6 +129,7 @@ func TestNotify(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	api := new(API)
+	api.notifyChan = make(chan int, 2)
 	server := NewConn(srv)
 	if err := server.Register(api); err != nil {
 		t.Fatal(err)
@@ -129,9 +137,10 @@ func TestNotify(t *testing.T) {
 	go server.Serve()
 	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
 	cli.Write([]byte(`{"id":null,"method":"API.notify","params":[2,3]}`))
-	time.Sleep(time.Millisecond * 100)
+	<-api.notifyChan
+	<-api.notifyChan
 	if api.notify != 2 {
-		t.Error("notification doesn't work")
+		t.Error("notification doesn't work", api.notify)
 	}
 }
 
@@ -203,7 +212,10 @@ func TestUnknownMethod(t *testing.T) {
 func TestClosedClientConn(t *testing.T) {
 	listener, _ := net.Listen("tcp", "localhost:0")
 	defer listener.Close()
-	client, _ := Dial("tcp", listener.Addr().String())
+	client, err := Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
 	var reply int
 	client.Go("API.AddSlow", [3]int{1, 2, 50}, &reply, nil)
 	conn, _ := listener.Accept()
@@ -211,7 +223,7 @@ func TestClosedClientConn(t *testing.T) {
 	api := new(API)
 	c.Register(api)
 	client.Close()
-	err := c.Serve()
+	err = c.Serve()
 	if err != io.EOF {
 		t.Error("Serve() return", err)
 	}
@@ -240,7 +252,8 @@ func TestClosedServerConn2(t *testing.T) {
 	srv.Close()
 	var reply int
 	err := client.Call("API.Add", [3]int{1, 2}, &reply)
-	if err != io.EOF {
-		t.Errorf("call return %T", err)
+	_, ok := err.(*net.OpError)
+	if !ok && err != io.EOF && err != ErrClosed {
+		t.Errorf("call return type=%T, err=%v", err, err)
 	}
 }
