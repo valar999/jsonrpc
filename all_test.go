@@ -256,4 +256,14 @@ func TestClosedServerConn2(t *testing.T) {
 	if !ok && err != io.EOF && err != ErrClosed {
 		t.Errorf("call return type=%T, err=%v", err, err)
 	}
+	err = client.Call("API.Add", [3]int{1, 2}, &reply)
+	_, ok = err.(*net.OpError)
+	if !ok && err != io.EOF && err != ErrClosed {
+		t.Errorf("call return type=%T, err=%v", err, err)
+	}
+	err = client.Call("API.Add", [3]int{1, 2}, &reply)
+	_, ok = err.(*net.OpError)
+	if !ok && err != io.EOF && err != ErrClosed {
+		t.Errorf("call return type=%T, err=%v", err, err)
+	}
 }
