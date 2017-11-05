@@ -20,7 +20,7 @@ type Conn struct {
 	Seq      uint
 	mutex    sync.Mutex
 	pending  map[uint]*Call
-	closing  bool
+	closed  bool
 }
 
 var ErrClosed = errors.New("connection is closed")
@@ -97,7 +97,7 @@ func (c *Conn) Serve() error {
 				continue
 			default:
 				c.mutex.Lock()
-				c.closing = true
+				c.closed = true
 				c.mutex.Unlock()
 				for id, call := range c.pending {
 					delete(c.pending, id)
@@ -220,7 +220,8 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 		}
 	}
 	call.Done = done
-	if c.closing {
+	if c.closed {
+		c.mutex.Unlock()
 		call.Error = ErrClosed
 		call.done()
 		return call
@@ -320,7 +321,7 @@ func Dial(network, address string) (*Conn, error) {
 
 func (c *Conn) Close() error {
 	c.mutex.Lock()
-	c.closing = true
+	c.closed = true
 	c.mutex.Unlock()
 	if c.conn != nil {
 		err := c.conn.Close()
