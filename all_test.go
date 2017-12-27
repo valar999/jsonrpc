@@ -82,7 +82,7 @@ func TestServerConn(t *testing.T) {
 	if data.Result.(float64) != 5 {
 		t.Error("result != 5")
 	}
-	if !bytes.Equal(data.Error, null) {
+	if !bytes.Equal(data.Error, Null) {
 		t.Error("error != null")
 	}
 }
