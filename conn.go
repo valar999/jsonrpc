@@ -27,7 +27,7 @@ var ErrClosed = errors.New("connection is closed")
 
 const msgSep byte = 10
 
-var null = json.RawMessage([]byte("null"))
+var Null = json.RawMessage([]byte("null"))
 
 type msg struct {
 	Id     interface{}     `json:"id"`
@@ -154,7 +154,7 @@ func (c *Conn) Serve() error {
 func (c *Conn) sendError(data msg, errmsg string) {
 	buf, err := json.Marshal(response{
 		Id:     data.Id,
-		Result: null,
+		Result: Null,
 		Error:  errmsg,
 	})
 	if err != nil {
@@ -186,7 +186,7 @@ func (c *Conn) callMethod(method method, data msg) {
 		buf, err := json.Marshal(response{
 			Id:     data.Id,
 			Result: reply.Interface(),
-			Error:  null,
+			Error:  Null,
 		})
 		if err != nil {
 			c.sendError(data, err.Error())
@@ -259,7 +259,7 @@ func (c *Conn) Call(method string, args interface{}, reply interface{}) error {
 
 func (c *Conn) Notify(method string, args interface{}) error {
 	req := notify{
-		Id:     null,
+		Id:     Null,
 		Method: method,
 		Params: args,
 	}
