@@ -3,11 +3,12 @@ package jsonrpc
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
-	"sync"
 )
 
 type TestAPIFactory struct {
@@ -19,8 +20,8 @@ func (f *TestAPIFactory) NewConn(conn *Conn) interface{} {
 
 type API struct {
 	notifyChan chan int
-	notify int
-	mutex sync.Mutex
+	notify     int
+	mutex      sync.Mutex
 }
 
 func (a *API) Add(args [2]int, reply *int) error {
@@ -34,6 +35,10 @@ func (a *API) AddSlow(args [3]int, reply *int) error {
 	return nil
 }
 
+func (a *API) Error(args interface{}, reply *bool) error {
+	*reply = true
+	return errors.New("test error")
+}
 
 func (a *API) Notify(args [2]int, reply *int) error {
 	a.mutex.Lock()
@@ -171,6 +176,26 @@ func TestClient(t *testing.T) {
 	}
 	if len(client.pending) != 0 {
 		t.Error("pending not empty")
+	}
+}
+
+func TestClientError(t *testing.T) {
+	cli, srv := net.Pipe()
+	defer cli.Close()
+	server := NewConn(srv)
+	if err := server.Register(new(API)); err != nil {
+		t.Fatal(err)
+	}
+	go server.Serve()
+
+	client := NewConn(cli)
+	go client.Serve()
+	var reply bool
+	if err := client.Call("API.Error", "x", &reply); err == nil {
+		t.Error("no error returned")
+	}
+	if reply {
+		t.Error("reply set to true")
 	}
 }
 

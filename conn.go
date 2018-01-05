@@ -20,7 +20,7 @@ type Conn struct {
 	Seq      uint
 	mutex    sync.Mutex
 	pending  map[uint]*Call
-	closed  bool
+	closed   bool
 }
 
 var ErrClosed = errors.New("connection is closed")
@@ -28,6 +28,13 @@ var ErrClosed = errors.New("connection is closed")
 const msgSep byte = 10
 
 var Null = json.RawMessage([]byte("null"))
+
+func isNull(value json.RawMessage) bool {
+	if string(value) == "null" {
+		return true
+	}
+	return false
+}
 
 type msg struct {
 	Id     interface{}     `json:"id"`
@@ -127,7 +134,7 @@ func (c *Conn) Serve() error {
 				continue
 			}
 			delete(c.pending, id)
-			if len(data.Error) > 0 {
+			if isNull(data.Error) {
 				err := json.Unmarshal(data.Result, call.Reply)
 				if err != nil {
 					call.Error = err
