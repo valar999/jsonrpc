@@ -34,7 +34,7 @@ type msg struct {
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
-	Error  string          `json:"error"`
+	Error  json.RawMessage `json:"error"`
 }
 
 type request struct {
@@ -127,7 +127,7 @@ func (c *Conn) Serve() error {
 				continue
 			}
 			delete(c.pending, id)
-			if data.Error == "" {
+			if len(data.Error) > 0 {
 				err := json.Unmarshal(data.Result, call.Reply)
 				if err != nil {
 					call.Error = err
