@@ -252,6 +252,9 @@ func TestClosedClientConn(t *testing.T) {
 	if err != io.EOF {
 		t.Error("Serve() return", err)
 	}
+	if !c.Closed {
+		t.Error("c.Closed is false")
+	}
 }
 
 func TestClosedServerConn(t *testing.T) {
