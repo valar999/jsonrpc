@@ -251,6 +251,9 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 		return call
 	}
 	if _, err := c.conn.Write(append(data, msgSep)); err != nil {
+		if err == io.EOF {
+			c.Closed = true
+		}
 		call.Error = err
 		delete(c.pending, id)
 		call.done()
