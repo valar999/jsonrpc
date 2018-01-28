@@ -130,6 +130,37 @@ func TestServerConnWithTwoSlow(t *testing.T) {
 	}
 }
 
+func TestServerClose(t *testing.T) {
+	server := NewServer(new(TestAPIFactory))
+	listener, _ := net.Listen("tcp", "localhost:0")
+	var serveFinish bool
+	go func() {
+		server.Serve(listener)
+		serveFinish = true
+	}()
+
+	client, _ := Dial("tcp", listener.Addr().String())
+	var reply int
+	call1 := client.Go("API.AddSlow", []int{1, 2, 100}, &reply, nil)
+	call2 := client.Go("API.AddSlow", []int{1, 2, 5}, &reply, nil)
+	time.Sleep(time.Millisecond*50)
+	server.Close()
+	<-call1.Done
+	<-call2.Done
+	if call1.Error == nil {
+		t.Error("call1 is not interrupted")
+	}
+	if call2.Error != nil && call2.Reply != 4 {
+		t.Error("call2 wrong")
+	}
+	if !serveFinish {
+		t.Error("Serve() not finished")
+	}
+	if _, err := Dial("tcp", listener.Addr().String()); err == nil {
+		t.Error("listener still listen")
+	}
+}
+
 func TestNotify(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
