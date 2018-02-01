@@ -143,7 +143,7 @@ func TestServerClose(t *testing.T) {
 	var reply int
 	call1 := client.Go("API.AddSlow", []int{1, 2, 100}, &reply, nil)
 	call2 := client.Go("API.AddSlow", []int{1, 2, 5}, &reply, nil)
-	time.Sleep(time.Millisecond*50)
+	time.Sleep(time.Millisecond * 50)
 	server.Close()
 	<-call1.Done
 	<-call2.Done
