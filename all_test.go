@@ -43,8 +43,9 @@ func (a *API) Error(args interface{}, reply *bool) error {
 func (a *API) Notify(args [2]int, reply *int) error {
 	a.mutex.Lock()
 	a.notify++
+	notify := a.notify
 	a.mutex.Unlock()
-	a.notifyChan <- a.notify
+	a.notifyChan <- notify
 	return nil
 }
 
@@ -133,10 +134,13 @@ func TestServerConnWithTwoSlow(t *testing.T) {
 func TestServerClose(t *testing.T) {
 	server := NewServer(new(TestAPIFactory))
 	listener, _ := net.Listen("tcp", "localhost:0")
+	mutex := new(sync.Mutex)
 	var serveFinish bool
 	go func() {
 		server.Serve(listener)
+		mutex.Lock()
 		serveFinish = true
+		mutex.Unlock()
 	}()
 
 	client, _ := Dial("tcp", listener.Addr().String())
@@ -153,9 +157,11 @@ func TestServerClose(t *testing.T) {
 	if call2.Error != nil && call2.Reply != 4 {
 		t.Error("call2 wrong")
 	}
+	mutex.Lock()
 	if !serveFinish {
 		t.Error("Serve() not finished")
 	}
+	mutex.Unlock()
 	if _, err := Dial("tcp", listener.Addr().String()); err == nil {
 		t.Error("listener still listen")
 	}
@@ -283,8 +289,8 @@ func TestClosedClientConn(t *testing.T) {
 	if err != io.EOF {
 		t.Error("Serve() return", err)
 	}
-	if !c.Closed {
-		t.Error("c.Closed is false")
+	if !c.Closed() {
+		t.Error("c.Closed() is false")
 	}
 }
 

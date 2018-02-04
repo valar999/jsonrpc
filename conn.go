@@ -13,14 +13,14 @@ import (
 )
 
 type Conn struct {
+	sync.Mutex
 	api      reflect.Value
 	methods  map[string]method
 	conn     io.ReadWriteCloser
 	seqMutex sync.Mutex
 	Seq      uint
-	mutex    sync.Mutex
 	pending  map[uint]*Call
-	Closed   bool
+	closed   bool
 }
 
 var ErrClosed = errors.New("connection is closed")
@@ -103,9 +103,9 @@ func (c *Conn) Serve() error {
 				log.Printf("%v %T", err, err)
 				continue
 			default:
-				c.mutex.Lock()
-				c.Closed = true
-				c.mutex.Unlock()
+				c.Lock()
+				c.closed = true
+				c.Unlock()
 				for id, call := range c.pending {
 					delete(c.pending, id)
 					call.Error = err
@@ -213,7 +213,7 @@ func (call *Call) done() {
 }
 
 func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan *Call) *Call {
-	c.mutex.Lock()
+	c.Lock()
 	call := &Call{
 		method: method,
 		args:   args,
@@ -227,8 +227,8 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 		}
 	}
 	call.Done = done
-	if c.Closed {
-		c.mutex.Unlock()
+	if c.closed {
+		c.Unlock()
 		call.Error = ErrClosed
 		call.done()
 		return call
@@ -238,7 +238,7 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 	c.Seq++
 	c.seqMutex.Unlock()
 	c.pending[id] = call
-	c.mutex.Unlock()
+	c.Unlock()
 
 	req := request{
 		Id:     id,
@@ -252,7 +252,7 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 	}
 	if _, err := c.conn.Write(append(data, msgSep)); err != nil {
 		if err == io.EOF {
-			c.Closed = true
+			c.closed = true
 		}
 		call.Error = err
 		delete(c.pending, id)
@@ -289,6 +289,9 @@ func getMethods(api interface{}) (methods map[string]method, err error) {
 	for i := 0; i < apiType.NumMethod(); i++ {
 		meth := apiType.Method(i)
 		name := meth.Name
+		if name == "Lock" || name == "Unlock" {
+			continue
+		}
 		if meth.Type.NumIn() != 3 {
 			err = fmt.Errorf(
 				"method %s has wrong number of ins: %d",
@@ -330,13 +333,20 @@ func Dial(network, address string) (*Conn, error) {
 }
 
 func (c *Conn) Close() error {
-	c.mutex.Lock()
-	c.Closed = true
-	c.mutex.Unlock()
+	c.Lock()
+	c.closed = true
+	c.Unlock()
 	if c.conn != nil {
 		err := c.conn.Close()
+		// TODO race
 		c.conn = nil
 		return err
 	}
 	return nil
+}
+
+func (c *Conn) Closed() bool {
+	c.Lock()
+	defer c.Unlock()
+	return c.closed
 }
