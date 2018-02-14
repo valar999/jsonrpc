@@ -146,17 +146,20 @@ func (c *Conn) Serve() error {
 		} else {
 			// Request
 			funcParts := strings.SplitN(data.Method, ".", 2)
+			var funcName string
 			if len(funcParts) >= 2 {
-				funcName := strings.Replace(
+				funcName = strings.Replace(
 					funcParts[1], ".", "_", -1)
-				method, ok := c.methods[funcName]
-				if ok {
-					go c.callMethod(method, data)
-				} else {
-					c.sendError(data,
-						"rpc: can't find method "+
-							funcName)
-				}
+			} else if len(funcParts) == 1 {
+				funcName = funcParts[0]
+			}
+			method, ok := c.methods[funcName]
+			if ok {
+				go c.callMethod(method, data)
+			} else {
+				c.sendError(data,
+					"rpc: can't find method "+
+						funcName)
 			}
 		}
 	}
