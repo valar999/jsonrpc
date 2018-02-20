@@ -186,6 +186,20 @@ func TestNotify(t *testing.T) {
 	}
 }
 
+func TestNotifyNotExist(t *testing.T) {
+	cli, srv := net.Pipe()
+	defer cli.Close()
+	go func() {
+		// reply to Notify with error, there is no id
+		srv.Write([]byte(`{"id":null,"result":null,"error":"err"}`))
+		srv.Close()
+	}()
+	client := NewConn(cli)
+	go client.Serve()
+	// there shoult not be any errors in stdout
+	time.Sleep(time.Millisecond * 10)
+}
+
 func TestClient(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()

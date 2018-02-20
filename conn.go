@@ -117,7 +117,6 @@ func (c *Conn) Serve() error {
 		if data.Method == "" {
 			// Response
 			if data.Id == nil {
-				log.Println("rpc: wrong response, no id", data)
 				continue
 			}
 			idFloat, ok := data.Id.(float64)
