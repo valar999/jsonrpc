@@ -338,6 +338,15 @@ func Dial(network, address string) (*Conn, error) {
 	return client, nil
 }
 
+func (c *Conn) RemoteAddr() string {
+	conn, ok := c.conn.(net.Conn)
+	if ok {
+		return conn.RemoteAddr().String()
+	} else {
+		return ""
+	}
+}
+
 func (c *Conn) Close() error {
 	c.Lock()
 	c.closed = true
