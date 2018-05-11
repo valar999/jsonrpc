@@ -126,8 +126,8 @@ func (c *Conn) Serve() error {
 				continue
 			}
 			id := uint(idFloat)
-			call := c.pending[id]
-			if call == nil {
+			call, ok := c.pending[id]
+			if call == nil || !ok {
 				log.Println("rpc: no receiver for response",
 					data)
 				continue
