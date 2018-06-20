@@ -137,8 +137,8 @@ func TestServerClose(t *testing.T) {
 	mutex := new(sync.Mutex)
 	var serveFinish bool
 	go func() {
-		server.Serve(listener)
 		mutex.Lock()
+		server.Serve(listener)
 		serveFinish = true
 		mutex.Unlock()
 	}()

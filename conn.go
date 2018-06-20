@@ -14,13 +14,12 @@ import (
 
 type Conn struct {
 	sync.Mutex
-	api      reflect.Value
-	methods  map[string]method
-	conn     io.ReadWriteCloser
-	seqMutex sync.Mutex
-	Seq      uint
-	pending  map[uint]*Call
-	closed   bool
+	api     reflect.Value
+	methods map[string]method
+	conn    io.ReadWriteCloser
+	Seq     uint
+	pending map[uint]*Call
+	closed  bool
 }
 
 var ErrClosed = errors.New("connection is closed")
@@ -105,12 +104,12 @@ func (c *Conn) Serve() error {
 			default:
 				c.Lock()
 				c.closed = true
-				c.Unlock()
 				for id, call := range c.pending {
 					delete(c.pending, id)
 					call.Error = err
 					call.done()
 				}
+				c.Unlock()
 				return err
 			}
 		}
@@ -126,13 +125,17 @@ func (c *Conn) Serve() error {
 				continue
 			}
 			id := uint(idFloat)
+			c.Lock()
 			call, ok := c.pending[id]
+			c.Unlock()
 			if call == nil || !ok {
 				log.Println("rpc: no receiver for response",
 					data)
 				continue
 			}
+			c.Lock()
 			delete(c.pending, id)
+			c.Unlock()
 			if isNull(data.Error) {
 				err := json.Unmarshal(data.Result, call.Reply)
 				if err != nil {
@@ -239,10 +242,8 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 		call.done()
 		return call
 	}
-	c.seqMutex.Lock()
 	id := c.Seq
 	c.Seq++
-	c.seqMutex.Unlock()
 	c.pending[id] = call
 	c.Unlock()
 
@@ -261,7 +262,9 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 			c.closed = true
 		}
 		call.Error = err
+		c.Lock()
 		delete(c.pending, id)
+		c.Unlock()
 		call.done()
 		return call
 	}
@@ -353,8 +356,6 @@ func (c *Conn) Close() error {
 	c.Unlock()
 	if c.conn != nil {
 		err := c.conn.Close()
-		// TODO race
-		c.conn = nil
 		return err
 	}
 	return nil
