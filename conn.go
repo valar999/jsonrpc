@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Conn struct {
@@ -333,6 +334,16 @@ func (c *Conn) Register(api interface{}) error {
 
 func Dial(network, address string) (*Conn, error) {
 	conn, err := net.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	client := NewConn(conn)
+	go client.Serve()
+	return client, nil
+}
+
+func DialTimeout(network, address string, timeout time.Duration) (*Conn, error) {
+	conn, err := net.DialTimeout(network, address, timeout)
 	if err != nil {
 		return nil, err
 	}
