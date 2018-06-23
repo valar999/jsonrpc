@@ -3,7 +3,6 @@ package jsonrpc
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -299,14 +298,8 @@ func getMethods(api interface{}) (methods map[string]method, err error) {
 	for i := 0; i < apiType.NumMethod(); i++ {
 		meth := apiType.Method(i)
 		name := meth.Name
-		if name == "Lock" || name == "Unlock" {
-			continue
-		}
 		if meth.Type.NumIn() != 3 {
-			err = fmt.Errorf(
-				"method %s has wrong number of ins: %d",
-				name, meth.Type.NumIn())
-			return
+			continue
 		}
 		methods[name] = method{
 			Func:       meth.Func,
