@@ -14,12 +14,13 @@ import (
 
 type Conn struct {
 	sync.Mutex
-	api     reflect.Value
-	methods map[string]method
-	conn    io.ReadWriteCloser
-	Seq     uint
-	pending map[uint]*Call
-	closed  bool
+	api       reflect.Value
+	methods   map[string]method
+	conn      io.ReadWriteCloser
+	Seq       uint
+	pending   map[uint]*Call
+	closed    bool
+	CloseChan chan bool
 }
 
 var ErrClosed = errors.New("connection is closed")
@@ -83,8 +84,9 @@ type Call struct {
 
 func NewConn(conn io.ReadWriteCloser) *Conn {
 	return &Conn{
-		conn:    conn,
-		pending: make(map[uint]*Call),
+		conn:      conn,
+		pending:   make(map[uint]*Call),
+		CloseChan: make(chan bool, 1),
 	}
 }
 
@@ -102,6 +104,7 @@ func (c *Conn) Serve() error {
 				log.Printf("%v %T", err, err)
 				continue
 			default:
+				c.Close()
 				c.Lock()
 				c.closed = true
 				for id, call := range c.pending {
@@ -356,6 +359,9 @@ func (c *Conn) RemoteAddr() string {
 
 func (c *Conn) Close() error {
 	c.Lock()
+	if !c.closed {
+		c.CloseChan <- true
+	}
 	c.closed = true
 	c.Unlock()
 	if c.conn != nil {
