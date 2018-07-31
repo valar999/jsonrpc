@@ -346,3 +346,25 @@ func TestClosedServerConn2(t *testing.T) {
 		t.Errorf("call return type=%T, err=%v", err, err)
 	}
 }
+
+func TestSynchronous(t *testing.T) {
+	cli, srv := net.Pipe()
+	defer cli.Close()
+	server := NewConn(srv)
+	server.Synchronous(true)
+	if err := server.Register(new(API)); err != nil {
+		t.Fatal(err)
+	}
+	go server.Serve()
+
+	client := NewConn(cli)
+	client.Synchronous(true)
+	go client.Serve()
+	var reply int
+	for i := 0; i < 100; i++ {
+		err := client.Call("API.Add", [2]int{1, 2}, &reply)
+		if err != nil {
+			t.Error(err)
+		}
+	}
+}
