@@ -14,13 +14,14 @@ import (
 
 type Conn struct {
 	sync.Mutex
-	api       reflect.Value
-	methods   map[string]method
-	conn      io.ReadWriteCloser
-	Seq       uint
-	pending   map[uint]*Call
-	closed    bool
-	CloseChan chan bool
+	api         reflect.Value
+	methods     map[string]method
+	conn        io.ReadWriteCloser
+	Seq         uint
+	pending     map[uint]*Call
+	synchronous bool
+	closed      bool
+	CloseChan   chan bool
 }
 
 var ErrClosed = errors.New("connection is closed")
@@ -160,7 +161,11 @@ func (c *Conn) Serve() error {
 			}
 			method, ok := c.methods[funcName]
 			if ok {
-				go c.callMethod(method, data)
+				if c.synchronous {
+					c.callMethod(method, data)
+				} else {
+					go c.callMethod(method, data)
+				}
 			} else {
 				c.sendError(data,
 					"rpc: can't find method "+
@@ -355,6 +360,12 @@ func (c *Conn) RemoteAddr() string {
 	} else {
 		return ""
 	}
+}
+
+func (c *Conn) Synchronous(value bool) {
+	c.Lock()
+	defer c.Unlock()
+	c.synchronous = value
 }
 
 func (c *Conn) Close() error {
