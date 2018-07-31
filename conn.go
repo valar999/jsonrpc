@@ -161,7 +161,10 @@ func (c *Conn) Serve() error {
 			}
 			method, ok := c.methods[funcName]
 			if ok {
-				if c.synchronous {
+				c.Lock()
+				synchronous := c.synchronous
+				c.Unlock()
+				if synchronous {
 					c.callMethod(method, data)
 				} else {
 					go c.callMethod(method, data)
