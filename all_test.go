@@ -351,14 +351,13 @@ func TestSynchronous(t *testing.T) {
 	cli, srv := net.Pipe()
 	defer cli.Close()
 	server := NewConn(srv)
-	server.Synchronous(true)
 	if err := server.Register(new(API)); err != nil {
 		t.Fatal(err)
 	}
+	server.Synchronous("add", true)
 	go server.Serve()
 
 	client := NewConn(cli)
-	client.Synchronous(true)
 	go client.Serve()
 	var reply int
 	for i := 0; i < 100; i++ {

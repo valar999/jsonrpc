@@ -64,9 +64,10 @@ type notify struct {
 }
 
 type method struct {
-	Func       reflect.Value
-	ParamsType reflect.Type
-	ReplyType  reflect.Type
+	Func        reflect.Value
+	ParamsType  reflect.Type
+	ReplyType   reflect.Type
+	synchronous bool
 }
 
 type Error string
@@ -365,10 +366,14 @@ func (c *Conn) RemoteAddr() string {
 	}
 }
 
-func (c *Conn) Synchronous(value bool) {
+func (c *Conn) Synchronous(funcName string, value bool) {
 	c.Lock()
 	defer c.Unlock()
-	c.synchronous = value
+	method, ok := c.methods[funcName]
+	if ok {
+		method.synchronous = value
+		c.methods[funcName] = method
+	}
 }
 
 func (c *Conn) Close() error {
