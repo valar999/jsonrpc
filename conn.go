@@ -14,14 +14,14 @@ import (
 
 type Conn struct {
 	sync.Mutex
-	api         reflect.Value
-	methods     map[string]method
-	conn        io.ReadWriteCloser
-	Seq         uint
-	pending     map[uint]*Call
-	synchronous bool
-	closed      bool
-	CloseChan   chan bool
+	api       reflect.Value
+	methods   map[string]Method
+	conn      io.ReadWriteCloser
+	Seq       uint
+	pending   map[uint]*Call
+	syncMutex *sync.Mutex
+	closed    bool
+	CloseChan chan bool
 }
 
 var ErrClosed = errors.New("connection is closed")
@@ -63,7 +63,7 @@ type notify struct {
 	Params interface{}     `json:"params"`
 }
 
-type method struct {
+type Method struct {
 	Func        reflect.Value
 	ParamsType  reflect.Type
 	ReplyType   reflect.Type
@@ -89,6 +89,7 @@ func NewConn(conn io.ReadWriteCloser) *Conn {
 		conn:      conn,
 		pending:   make(map[uint]*Call),
 		CloseChan: make(chan bool, 1),
+		syncMutex: new(sync.Mutex),
 	}
 }
 
@@ -163,14 +164,17 @@ func (c *Conn) Serve() error {
 			method, ok := c.methods[strings.ToLower(funcName)]
 			if ok {
 				if method.synchronous {
-					c.callMethod(method, data)
+					go func(m Method, d msg) {
+						c.syncMutex.Lock()
+						c.callMethod(m, d)
+						c.syncMutex.Unlock()
+					}(method, data)
 				} else {
 					go c.callMethod(method, data)
 				}
 			} else {
 				c.sendError(data,
-					"rpc: can't find method "+
-						funcName)
+					"rpc: can't find method "+funcName)
 			}
 		}
 	}
@@ -189,7 +193,7 @@ func (c *Conn) sendError(data msg, errmsg string) {
 	c.conn.Write(append(buf, msgSep))
 }
 
-func (c *Conn) callMethod(method method, data msg) {
+func (c *Conn) callMethod(method Method, data msg) {
 	params := reflect.New(method.ParamsType)
 	if err := json.Unmarshal(data.Params, params.Interface()); err != nil {
 		c.sendError(data, err.Error())
@@ -301,8 +305,8 @@ func (c *Conn) Notify(method string, args interface{}) error {
 	return nil
 }
 
-func getMethods(api interface{}) (methods map[string]method, err error) {
-	methods = make(map[string]method)
+func getMethods(api interface{}) (methods map[string]Method, err error) {
+	methods = make(map[string]Method)
 	apiType := reflect.TypeOf(api)
 	for i := 0; i < apiType.NumMethod(); i++ {
 		meth := apiType.Method(i)
@@ -310,7 +314,7 @@ func getMethods(api interface{}) (methods map[string]method, err error) {
 		if meth.Type.NumIn() != 3 {
 			continue
 		}
-		methods[strings.ToLower(name)] = method{
+		methods[strings.ToLower(name)] = Method{
 			Func:       meth.Func,
 			ParamsType: meth.Type.In(1),
 			ReplyType:  meth.Type.In(2),
