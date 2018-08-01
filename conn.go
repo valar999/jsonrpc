@@ -164,8 +164,10 @@ func (c *Conn) Serve() error {
 			method, ok := c.methods[strings.ToLower(funcName)]
 			if ok {
 				if method.synchronous {
+					c.Lock()
 					go func(m Method, d msg) {
 						c.syncMutex.Lock()
+						c.Unlock()
 						c.callMethod(m, d)
 						c.syncMutex.Unlock()
 					}(method, data)
