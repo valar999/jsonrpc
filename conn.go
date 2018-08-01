@@ -160,12 +160,9 @@ func (c *Conn) Serve() error {
 			} else if len(funcParts) == 1 {
 				funcName = funcParts[0]
 			}
-			method, ok := c.methods[funcName]
+			method, ok := c.methods[strings.ToLower(funcName)]
 			if ok {
-				c.Lock()
-				synchronous := c.synchronous
-				c.Unlock()
-				if synchronous {
+				if method.synchronous {
 					c.callMethod(method, data)
 				} else {
 					go c.callMethod(method, data)
@@ -313,13 +310,11 @@ func getMethods(api interface{}) (methods map[string]method, err error) {
 		if meth.Type.NumIn() != 3 {
 			continue
 		}
-		methods[name] = method{
+		methods[strings.ToLower(name)] = method{
 			Func:       meth.Func,
 			ParamsType: meth.Type.In(1),
 			ReplyType:  meth.Type.In(2),
 		}
-		// TODO change only first char also
-		methods[strings.ToLower(name)] = methods[name]
 	}
 	return
 }
@@ -369,10 +364,11 @@ func (c *Conn) RemoteAddr() string {
 func (c *Conn) Synchronous(funcName string, value bool) {
 	c.Lock()
 	defer c.Unlock()
-	method, ok := c.methods[funcName]
+	name := strings.ToLower(funcName)
+	method, ok := c.methods[name]
 	if ok {
 		method.synchronous = value
-		c.methods[funcName] = method
+		c.methods[name] = method
 	}
 }
 
