@@ -14,7 +14,7 @@ import (
 type TestAPIFactory struct {
 }
 
-func (f *TestAPIFactory) NewConn(conn *Conn) interface{} {
+func (f *TestAPIFactory) NewConn(c Conn) interface{} {
 	return new(API)
 }
 

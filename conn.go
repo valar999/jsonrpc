@@ -12,7 +12,19 @@ import (
 	"time"
 )
 
-type Conn struct {
+type Conn interface {
+	Serve() error
+	Go(string, interface{}, interface{}, chan *Call) *Call
+	Call(method string, args interface{}, reply interface{}) error
+	Notify(method string, args interface{}) error
+	Register(api interface{}) error
+	RemoteAddr() string
+	Synchronous(funcName string, value bool)
+	Close() error
+	Closed() bool
+}
+
+type conn struct {
 	sync.Mutex
 	api       reflect.Value
 	methods   map[string]Method
@@ -84,16 +96,16 @@ type Call struct {
 	Done   chan *Call
 }
 
-func NewConn(conn io.ReadWriteCloser) *Conn {
-	return &Conn{
-		conn:      conn,
+func NewConn(c io.ReadWriteCloser) *conn {
+	return &conn{
+		conn:      c,
 		pending:   make(map[uint]*Call),
 		CloseChan: make(chan bool, 1),
 		syncMutex: new(sync.Mutex),
 	}
 }
 
-func (c *Conn) Serve() error {
+func (c *conn) Serve() error {
 	if c.conn == nil {
 		return nil
 	}
@@ -182,7 +194,7 @@ func (c *Conn) Serve() error {
 	}
 }
 
-func (c *Conn) sendError(data msg, errmsg string) {
+func (c *conn) sendError(data msg, errmsg string) {
 	buf, err := json.Marshal(response{
 		Id:     data.Id,
 		Result: Null,
@@ -195,7 +207,7 @@ func (c *Conn) sendError(data msg, errmsg string) {
 	c.conn.Write(append(buf, msgSep))
 }
 
-func (c *Conn) callMethod(method Method, data msg) {
+func (c *conn) callMethod(method Method, data msg) {
 	params := reflect.New(method.ParamsType)
 	if err := json.Unmarshal(data.Params, params.Interface()); err != nil {
 		c.sendError(data, err.Error())
@@ -236,7 +248,7 @@ func (call *Call) done() {
 	}
 }
 
-func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan *Call) *Call {
+func (c *conn) Go(method string, args interface{}, reply interface{}, done chan *Call) *Call {
 	c.Lock()
 	call := &Call{
 		method: method,
@@ -286,12 +298,12 @@ func (c *Conn) Go(method string, args interface{}, reply interface{}, done chan 
 	return call
 }
 
-func (c *Conn) Call(method string, args interface{}, reply interface{}) error {
+func (c *conn) Call(method string, args interface{}, reply interface{}) error {
 	call := <-c.Go(method, args, reply, make(chan *Call, 1)).Done
 	return call.Error
 }
 
-func (c *Conn) Notify(method string, args interface{}) error {
+func (c *conn) Notify(method string, args interface{}) error {
 	req := notify{
 		Id:     Null,
 		Method: method,
@@ -325,7 +337,7 @@ func getMethods(api interface{}) (methods map[string]Method, err error) {
 	return
 }
 
-func (c *Conn) Register(api interface{}) error {
+func (c *conn) Register(api interface{}) error {
 	if c.methods != nil {
 		return errors.New("we can register only one API")
 	}
@@ -338,7 +350,7 @@ func (c *Conn) Register(api interface{}) error {
 	return nil
 }
 
-func Dial(network, address string) (*Conn, error) {
+func Dial(network, address string) (*conn, error) {
 	conn, err := net.Dial(network, address)
 	if err != nil {
 		return nil, err
@@ -348,7 +360,7 @@ func Dial(network, address string) (*Conn, error) {
 	return client, nil
 }
 
-func DialTimeout(network, address string, timeout time.Duration) (*Conn, error) {
+func DialTimeout(network, address string, timeout time.Duration) (*conn, error) {
 	conn, err := net.DialTimeout(network, address, timeout)
 	if err != nil {
 		return nil, err
@@ -358,7 +370,7 @@ func DialTimeout(network, address string, timeout time.Duration) (*Conn, error) 
 	return client, nil
 }
 
-func (c *Conn) RemoteAddr() string {
+func (c *conn) RemoteAddr() string {
 	conn, ok := c.conn.(net.Conn)
 	if ok {
 		return conn.RemoteAddr().String()
@@ -367,7 +379,7 @@ func (c *Conn) RemoteAddr() string {
 	}
 }
 
-func (c *Conn) Synchronous(funcName string, value bool) {
+func (c *conn) Synchronous(funcName string, value bool) {
 	c.Lock()
 	defer c.Unlock()
 	name := strings.ToLower(funcName)
@@ -378,7 +390,7 @@ func (c *Conn) Synchronous(funcName string, value bool) {
 	}
 }
 
-func (c *Conn) Close() error {
+func (c *conn) Close() error {
 	c.Lock()
 	if !c.closed {
 		c.CloseChan <- true
@@ -392,7 +404,7 @@ func (c *Conn) Close() error {
 	return nil
 }
 
-func (c *Conn) Closed() bool {
+func (c *conn) Closed() bool {
 	c.Lock()
 	defer c.Unlock()
 	return c.closed

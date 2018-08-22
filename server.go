@@ -6,21 +6,21 @@ import (
 )
 
 type APIFactory interface {
-	NewConn(conn *Conn) interface{}
+	NewConn(Conn) interface{}
 }
 
 type Server struct {
 	sync.Mutex
 	apiFactory APIFactory
 	listeners  map[net.Listener]bool
-	conns      map[*Conn]bool
+	conns      map[*conn]bool
 }
 
 func NewServer(api APIFactory) *Server {
 	return &Server{
 		apiFactory: api,
 		listeners:  make(map[net.Listener]bool),
-		conns:      make(map[*Conn]bool),
+		conns:      make(map[*conn]bool),
 	}
 }
 
