@@ -22,6 +22,7 @@ type Conn interface {
 	Synchronous(funcName string, value bool)
 	Close() error
 	Closed() bool
+	CloseChan() chan bool
 }
 
 type conn struct {
@@ -33,7 +34,7 @@ type conn struct {
 	pending   map[uint]*Call
 	syncMutex *sync.Mutex
 	closed    bool
-	CloseChan chan bool
+	closeChan chan bool
 }
 
 var ErrClosed = errors.New("connection is closed")
@@ -100,7 +101,7 @@ func NewConn(c io.ReadWriteCloser) *conn {
 	return &conn{
 		conn:      c,
 		pending:   make(map[uint]*Call),
-		CloseChan: make(chan bool, 1),
+		closeChan: make(chan bool, 1),
 		syncMutex: new(sync.Mutex),
 	}
 }
@@ -393,7 +394,7 @@ func (c *conn) Synchronous(funcName string, value bool) {
 func (c *conn) Close() error {
 	c.Lock()
 	if !c.closed {
-		c.CloseChan <- true
+		c.closeChan <- true
 	}
 	c.closed = true
 	c.Unlock()
@@ -408,4 +409,8 @@ func (c *conn) Closed() bool {
 	c.Lock()
 	defer c.Unlock()
 	return c.closed
+}
+
+func (c *conn) CloseChan() chan bool {
+	return c.closeChan
 }
