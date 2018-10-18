@@ -51,6 +51,10 @@ func isNull(value json.RawMessage) bool {
 	return false
 }
 
+var jsonrpcFields = []string{"id", "method", "params", "result", "error"}
+
+type rawMsg map[string]json.RawMessage
+
 type msg struct {
 	Id     interface{}     `json:"id"`
 	Method string          `json:"method"`
@@ -78,10 +82,11 @@ type notify struct {
 }
 
 type Method struct {
-	Func        reflect.Value
-	ParamsType  reflect.Type
-	ReplyType   reflect.Type
-	synchronous bool
+	Func          reflect.Value
+	ParamsType    reflect.Type
+	ReplyType     reflect.Type
+	RawParamsType reflect.Type
+	synchronous   bool
 }
 
 type Error string
@@ -113,8 +118,18 @@ func (c *conn) Serve() error {
 	}
 	dec := json.NewDecoder(c.conn)
 	for {
+		var rawData rawMsg
+		var raw []byte
 		var data msg
-		err := dec.Decode(&data)
+		err := dec.Decode(&rawData)
+		if err == nil {
+			d, _ := json.Marshal(rawData)
+			for _, field := range jsonrpcFields {
+				delete(rawData, field)
+			}
+			raw, _ = json.Marshal(rawData)
+			err = json.Unmarshal(d, &data)
+		}
 		if err != nil {
 			switch err.(type) {
 			case *json.UnmarshalTypeError:
@@ -182,11 +197,11 @@ func (c *conn) Serve() error {
 					go func(m Method, d msg) {
 						c.syncMutex.Lock()
 						c.Unlock()
-						c.callMethod(m, d)
+						c.callMethod(m, d, raw)
 						c.syncMutex.Unlock()
 					}(method, data)
 				} else {
-					go c.callMethod(method, data)
+					go c.callMethod(method, data, raw)
 				}
 			} else {
 				c.sendError(data,
@@ -209,7 +224,7 @@ func (c *conn) sendError(data msg, errmsg string) {
 	c.conn.Write(append(buf, msgSep))
 }
 
-func (c *conn) callMethod(method Method, data msg) {
+func (c *conn) callMethod(method Method, data msg, rawData []byte) {
 	params := reflect.New(method.ParamsType)
 	if err := json.Unmarshal(data.Params, params.Interface()); err != nil {
 		c.sendError(data, err.Error())
@@ -217,8 +232,18 @@ func (c *conn) callMethod(method Method, data msg) {
 	}
 	reply := reflect.New(method.ReplyType.Elem())
 	var ret []reflect.Value
-	ret = method.Func.Call([]reflect.Value{c.api,
-		reflect.Indirect(params), reply})
+	if method.RawParamsType != nil {
+		raw := reflect.New(method.RawParamsType)
+		if err := json.Unmarshal(rawData, raw.Interface()); err != nil {
+			c.sendError(data, err.Error())
+			return
+		}
+		ret = method.Func.Call([]reflect.Value{c.api,
+			reflect.Indirect(params), reply, reflect.Indirect(raw)})
+	} else {
+		ret = method.Func.Call([]reflect.Value{c.api,
+			reflect.Indirect(params), reply})
+	}
 	var retErr reflect.Value
 	retErr = ret[0]
 	if err := retErr.Interface(); err != nil {
@@ -343,13 +368,17 @@ func getMethods(api interface{}) (methods map[string]Method, err error) {
 	for i := 0; i < apiType.NumMethod(); i++ {
 		meth := apiType.Method(i)
 		name := meth.Name
-		if meth.Type.NumIn() != 3 {
-			continue
-		}
-		methods[strings.ToLower(name)] = Method{
-			Func:       meth.Func,
-			ParamsType: meth.Type.In(1),
-			ReplyType:  meth.Type.In(2),
+		n := meth.Type.NumIn()
+		if n >= 3 && n <= 4 {
+			method := Method{
+				Func:       meth.Func,
+				ParamsType: meth.Type.In(1),
+				ReplyType:  meth.Type.In(2),
+			}
+			if n == 4 {
+				method.RawParamsType = meth.Type.In(3)
+			}
+			methods[strings.ToLower(name)] = method
 		}
 	}
 	return
