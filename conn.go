@@ -17,6 +17,7 @@ type Conn interface {
 	Go(string, interface{}, interface{}, chan *Call) *Call
 	Call(method string, args interface{}, reply interface{}) error
 	Notify(method string, args interface{}) error
+	NotifyResponse(args interface{}) error
 	Register(api interface{}) error
 	RemoteAddr() string
 	Synchronous(funcName string, value bool)
@@ -309,6 +310,22 @@ func (c *conn) Notify(method string, args interface{}) error {
 		Id:     Null,
 		Method: method,
 		Params: args,
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	if _, err := c.conn.Write(append(data, msgSep)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *conn) NotifyResponse(args interface{}) error {
+	req := response{
+		Id:     0,
+		Result: args,
+		Error:  Null,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
