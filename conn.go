@@ -138,7 +138,6 @@ func (c *conn) Serve() error {
 			default:
 				c.Close()
 				c.Lock()
-				c.closed = true
 				for id, call := range c.pending {
 					delete(c.pending, id)
 					call.Error = err
@@ -312,14 +311,14 @@ func (c *conn) Go(method string, args interface{}, reply interface{}, done chan 
 		return call
 	}
 	if _, err := c.conn.Write(append(data, msgSep)); err != nil {
-		if err == io.EOF {
-			c.closed = true
-		}
 		call.Error = err
 		c.Lock()
 		delete(c.pending, id)
 		c.Unlock()
 		call.done()
+		if err == io.EOF {
+			c.Close()
+		}
 		return call
 	}
 	return call
